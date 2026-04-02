@@ -53,8 +53,13 @@ if uploaded_file is not None:
 
             # معالجة النتائج وتحديد حجم الصورة لضبط المربعات
             target_sizes = torch.tensor([image.size[::-1]])
-            results = processor.image_processor.post_process_object_detection(outputs=outputs, target_sizes=target_sizes, threshold=threshold)
-            , target_sizes=target_sizes, threshold=threshold)
+            
+            # تم تصحيح هذا السطر بإضافة image_processor
+            results = processor.image_processor.post_process_object_detection(
+                outputs=outputs, 
+                target_sizes=target_sizes, 
+                threshold=threshold
+            )
             
             # أخذ نتائج أول صورة (لأننا رفعنا صورة واحدة)
             i = 0
