@@ -1,46 +1,80 @@
 import streamlit as st
-from PIL import Image
-import numpy as np
-from ultralytics import YOLO
+from PIL import Image, ImageDraw
+import torch
+from transformers import OwlViTProcessor, OwlViTForObjectDetection
 
-st.set_page_config(page_title="مساعد كاندي كراش", layout="centered")
-st.title("🍬 محلل لوحة كاندي كراش (النسخة الخاصة)")
+st.set_page_config(page_title="كاندي كراش - Zero Shot", layout="centered")
+st.title("🍬 محلل كاندي كراش (بدون تدريب مسبق)")
 
-# دالة لتحميل نموذجك الخاص لمرة واحدة فقط لتسريع الأداء
+# 1. تحميل النموذج المتقدم (سيأخذ وقتاً قليلاً في المرة الأولى للتحميل)
 @st.cache_resource
-def load_custom_model():
-    # هنا نقوم بتحميل الملف الذي قمت بتدريبه
-    return YOLO("best.pt")
+def load_zero_shot_model():
+    # نموذج OWL-ViT من جوجل المتخصص في البحث بالنصوص
+    processor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch32")
+    model = OwlViTForObjectDetection.from_pretrained("google/owlvit-base-patch32")
+    return processor, model
 
-try:
-    model = load_custom_model()
-    st.sidebar.success("✅ تم تحميل نموذج best.pt بنجاح!")
-except Exception as e:
-    st.sidebar.error("❌ لم يتم العثور على ملف best.pt. تأكد من وضعه في نفس المجلد مع ملف app.py.")
-    st.stop()
+with st.spinner("جاري تحميل العقل المدبر OWL-ViT..."):
+    processor, model = load_zero_shot_model()
+    st.sidebar.success("✅ النموذج جاهز للعمل!")
 
-# واجهة رفع الصور
-uploaded_file = st.file_uploader("قم برفع إحدى لقطات الشاشة التي صورتها...", type=["jpg", "jpeg", "png"])
+# 2. الكلمات التي نريد من الذكاء الاصطناعي البحث عنها في الصورة
+# يمكنك تعديل هذه الكلمات أو إضافتها باللغة الإنجليزية
+queries = [
+    "red candy", "blue candy", "green candy", 
+    "yellow candy", "orange candy", "purple candy", 
+    "black licorice", "ice block", "jelly"
+]
+
+st.sidebar.markdown("**العناصر التي نبحث عنها:**")
+for q in queries:
+    st.sidebar.markdown(f"- {q}")
+
+# 3. واجهة رفع الصور
+uploaded_file = st.file_uploader("ارفع صورة لوحة كاندي كراش...", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    # عرض الصورة الأصلية
-    image = Image.open(uploaded_file)
+    # فتح الصورة وتحويلها للصيغة المناسبة
+    image = Image.open(uploaded_file).convert("RGB")
     st.image(image, caption="الصورة الأصلية", use_container_width=True)
-    
-    if st.button("🔍 تحليل اللوحة"):
-        with st.spinner("الذكاء الاصطناعي يقوم بعمله..."):
-            # تحويل الصورة لتناسب مكتبة YOLO
-            img_array = np.array(image)
+
+    # شريط التحكم بحساسية النموذج
+    threshold = st.slider("نسبة الثقة (Threshold)", min_value=0.01, max_value=0.50, value=0.10, step=0.01)
+
+    if st.button("🔍 ابحث عن العناصر"):
+        with st.spinner("الذكاء الاصطناعي يبحث الآن..."):
             
-            # تنفيذ التوقع (Inference)
-            # وضعنا نسبة الثقة 0.25، يمكنك رفعها لاحقاً إذا ظهرت مربعات خاطئة
-            results = model.predict(source=img_array, conf=0.05)
+            # تجهيز الصورة والنصوص للنموذج
+            inputs = processor(text=[queries], images=image, return_tensors="pt")
             
-            # استخراج الصورة مع المربعات المرسومة حول الحلوى
-            res_plotted = results[0].plot()
+            # تنفيذ البحث (بدون حسابات التدريب لتسريع العملية)
+            with torch.no_grad():
+                outputs = model(**inputs)
+
+            # معالجة النتائج وتحديد حجم الصورة لضبط المربعات
+            target_sizes = torch.tensor([image.size[::-1]])
+            results = processor.post_process_object_detection(outputs=outputs, target_sizes=target_sizes, threshold=threshold)
             
-            # عرض النتيجة
-            st.image(res_plotted, caption="اللوحة بعد التحليل", use_container_width=True)
+            # أخذ نتائج أول صورة (لأننا رفعنا صورة واحدة)
+            i = 0
+            boxes, scores, labels = results[i]["boxes"], results[i]["scores"], results[i]["labels"]
             
-            # طباعة عدد العناصر التي وجدها
-            st.success(f"تم اكتشاف {len(results[0].boxes)} عنصر في اللوحة!")
+            # رسم المربعات على الصورة
+            draw = ImageDraw.Draw(image)
+            count = 0
+            
+            for box, score, label in zip(boxes, scores, labels):
+                box = [round(i, 2) for i in box.tolist()]
+                label_name = queries[label.item()]
+                confidence = round(score.item(), 2)
+                
+                # رسم المربع بخط عريض (أحمر)
+                draw.rectangle(box, outline="red", width=4)
+                
+                # كتابة اسم العنصر ونسبة الثقة فوقه
+                draw.text((box[0], box[1] - 15), f"{label_name}: {confidence}", fill="white")
+                count += 1
+                
+            # عرض النتيجة النهائية
+            st.image(image, caption="اللوحة بعد التحليل النصي", use_container_width=True)
+            st.success(f"تم اكتشاف {count} عنصر بناءً على الوصف!")
