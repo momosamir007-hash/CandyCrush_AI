@@ -1,9 +1,8 @@
-# app.py
+# app_v2.py
 """
-╔═══════════════════════════════════════════════════╗
-║ 🍬 Candy Crush AI Assistant - Streamlit App ║
-║ النسخة المطورة مع الأسهم والتحليل المتقدم ║
-╚═══════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════╗
+║ 🍬 Candy Crush AI v2 - يتعرف على 50+ عنصر ║
+╚══════════════════════════════════════════════════╝
 """
 import streamlit as st
 from PIL import Image
@@ -11,7 +10,14 @@ import torch
 import numpy as np
 import cv2
 import time
-from transformers import CLIPProcessor, CLIPModel
+from io import BytesIO
+from candy_elements import (
+    ALL_ELEMENTS,
+    ElementCategory,
+    get_elements_by_category,
+    print_catalog
+)
+from classifier_v2 import CandyCrushClassifierV2
 from move_engine import CandyEngine
 from grid_visualizer import (
     draw_arrows_on_image,
@@ -19,307 +25,237 @@ from grid_visualizer import (
     create_grid_image,
     create_move_diagram,
     highlight_matches,
-    CANDY_EMOJI,
-    CANDY_COLORS_RGB
 )
 
-# ═══════════════════════════════════════
-# إعداد الصفحة
-# ═══════════════════════════════════════
+# ═══ إعداد الصفحة ═══
 st.set_page_config(
-    page_title="🍬 Candy Crush AI",
+    page_title="🍬 Candy Crush AI v2",
     page_icon="🍬",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ═══════════════════════════════════════
-# CSS مخصص
-# ═══════════════════════════════════════
+# ═══ CSS ═══
 st.markdown("""
 <style>
-.main-header {
+.main-title {
     text-align: center;
     background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcb77, #4d96ff, #9b59b6);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-    font-size: 2.5em;
-    font-weight: bold;
-    margin-bottom: 0;
+    font-size: 2.8em;
+    font-weight: 900;
 }
-.sub-header {
-    text-align: center;
-    color: #888;
-    margin-top: 0;
-}
-.move-card {
-    background: linear-gradient(135deg, #1a1a2e, #16213e);
-    border-radius: 15px;
-    padding: 20px;
-    margin: 10px 0;
+.element-card {
+    background: #1a1a2e;
+    border-radius: 12px;
+    padding: 12px;
+    margin: 6px 0;
     border-left: 4px solid #ffd93d;
     color: white;
+    font-size: 0.9em;
 }
-.score-badge {
-    background: #ffd93d;
-    color: #1a1a2e;
-    padding: 5px 15px;
-    border-radius: 20px;
-    font-weight: bold;
-    display: inline-block;
+.priority-high {
+    border-left-color: #ff4444;
 }
-.chain-badge {
-    background: #ff6b6b;
-    color: white;
-    padding: 3px 10px;
-    border-radius: 10px;
-    font-size: 0.85em;
+.priority-med {
+    border-left-color: #ffaa00;
 }
-.special-badge {
-    background: #9b59b6;
-    color: white;
-    padding: 3px 10px;
-    border-radius: 10px;
-    font-size: 0.85em;
+.priority-low {
+    border-left-color: #44ff44;
 }
-.stat-box {
+.grid-display {
+    font-size: 1.4em;
+    letter-spacing: 4px;
+    line-height: 2;
+    font-family: monospace;
+    text-align: center;
+}
+.stat-metric {
     background: #16213e;
     border-radius: 10px;
     padding: 15px;
     text-align: center;
     color: white;
+    margin: 5px;
 }
-.stat-number {
-    font-size: 2em;
-    font-weight: bold;
-    color: #ffd93d;
-}
-.grid-emoji {
-    font-size: 1.5em;
-    letter-spacing: 5px;
-    line-height: 1.8;
-    font-family: monospace;
+.legend-item {
+    display: inline-block;
+    margin: 3px 8px;
+    font-size: 0.95em;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ═══════════════════════════════════════
-# تحميل النموذج
-# ═══════════════════════════════════════
+# ═══ تحميل النموذج ═══
 @st.cache_resource
-def load_clip_model():
-    """تحميل CLIP مرة واحدة فقط"""
-    with st.spinner("🔄 جاري تحميل نموذج الذكاء الاصطناعي..."):
-        model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-        processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-    return model, processor
-
-model, processor = load_clip_model()
-
-# ═══════════════════════════════════════
-# تعريف أوصاف الحلوى لـ CLIP
-# ═══════════════════════════════════════
-CANDY_PROMPTS = {
-    'red': [
-        "a red candy piece",
-        "red jellybean candy",
-        "bright red round candy",
-    ],
-    'blue': [
-        "a blue candy piece",
-        "blue lozenge candy",
-        "bright blue diamond candy",
-    ],
-    'green': [
-        "a green candy piece",
-        "green square candy",
-        "bright green candy",
-    ],
-    'yellow': [
-        "a yellow candy piece",
-        "yellow drop candy",
-        "bright yellow candy",
-    ],
-    'orange': [
-        "a orange candy piece",
-        "orange diamond candy",
-        "bright orange candy",
-    ],
-    'purple': [
-        "a purple candy piece",
-        "purple round candy",
-        "bright purple candy",
-    ],
-}
-
-# قائمة مسطحة للتصنيف
-ALL_LABELS = []
-LABEL_TO_COLOR = {}
-for color, prompts in CANDY_PROMPTS.items():
-    for prompt in prompts:
-        ALL_LABELS.append(prompt)
-        LABEL_TO_COLOR[prompt] = color
-
-# ═══════════════════════════════════════
-# دالة تصنيف الخلية
-# ═══════════════════════════════════════
-def classify_cell(cell_image: Image.Image) -> tuple:
-    """تصنيف خلية واحدة باستخدام CLIP"""
-    inputs = processor(
-        text=ALL_LABELS,
-        images=cell_image,
-        return_tensors="pt",
-        padding=True
+def load_classifier():
+    return CandyCrushClassifierV2(
+        model_name="openai/clip-vit-base-patch32",
+        active_categories=[
+            ElementCategory.BASIC_CANDY,
+            ElementCategory.SPECIAL_CANDY,
+            ElementCategory.BLOCKER,
+            ElementCategory.COVER,
+            ElementCategory.BOARD,
+            ElementCategory.INGREDIENT,
+        ]
     )
-    with torch.no_grad():
-        outputs = model(**inputs)
-        logits = outputs.logits_per_image[0]
-        probs = logits.softmax(dim=0)
 
-    # تجميع الاحتمالات حسب اللون
-    color_scores = {}
-    for idx, label in enumerate(ALL_LABELS):
-        color = LABEL_TO_COLOR[label]
-        if color not in color_scores:
-            color_scores[color] = 0
-        color_scores[color] += probs[idx].item()
-
-    # أفضل لون
-    best_color = max(color_scores, key=color_scores.get)
-    confidence = color_scores[best_color] / sum(color_scores.values())
-    return best_color, confidence
-
-def classify_board(
-    img_np: np.ndarray,
-    rows: int = 9,
-    cols: int = 9,
-    padding: float = 0.1,
-    progress_bar=None
-) -> tuple:
-    """تصنيف اللوحة الكاملة"""
-    h, w = img_np.shape[:2]
-    cell_h = h // rows
-    cell_w = w // cols
-    grid = np.full((rows, cols), "empty", dtype=object)
-    confidence_grid = np.zeros((rows, cols))
-    total = rows * cols
-    count = 0
-
-    for r in range(rows):
-        for c in range(cols):
-            # حدود الخلية مع padding
-            pad_y = int(cell_h * padding)
-            pad_x = int(cell_w * padding)
-            y1 = r * cell_h + pad_y
-            y2 = (r + 1) * cell_h - pad_y
-            x1 = c * cell_w + pad_x
-            x2 = (c + 1) * cell_w - pad_x
-            cell = img_np[y1:y2, x1:x2]
-            if cell.size == 0:
-                continue
-            cell_pil = Image.fromarray(cell)
-            color, conf = classify_cell(cell_pil)
-            grid[r, c] = color
-            confidence_grid[r, c] = conf
-            count += 1
-            if progress_bar:
-                progress_bar.progress(
-                    count / total,
-                    text=f"🔍 تحليل الخلية ({r},{c})... {count}/{total}"
-                )
-
-    return grid, confidence_grid
-
-# ═══════════════════════════════════════
-# الشريط الجانبي
-# ═══════════════════════════════════════
+# ═══ الشريط الجانبي ═══
 with st.sidebar:
     st.markdown("## ⚙️ الإعدادات")
-    st.markdown("### 📐 أبعاد الشبكة")
-    grid_rows = st.slider("عدد الصفوف", 5, 12, 9)
-    grid_cols = st.slider("عدد الأعمدة", 5, 12, 9)
+    st.markdown("### 📐 الشبكة")
+    grid_rows = st.slider("صفوف", 5, 12, 9)
+    grid_cols = st.slider("أعمدة", 5, 12, 9)
 
-    st.markdown("### 🎯 دقة التحليل")
-    cell_padding = st.slider(
-        "تقليص الحواف (Padding)",
-        0.0, 0.3, 0.12, 0.02,
-        help="نسبة القص من حواف كل خلية لتجنب التداخل"
-    )
+    st.markdown("### 🎯 الدقة")
+    cell_padding = st.slider("تقليص الحواف", 0.0, 0.3, 0.12, 0.02)
 
-    st.markdown("### 🏆 عرض الحركات")
-    top_moves = st.slider("عدد أفضل الحركات", 1, 10, 3)
-    show_grid_overlay = st.checkbox("عرض الشبكة الملونة", True)
-    show_match_highlight = st.checkbox("تمييز الحلوى المتطابقة", True)
-    show_confidence = st.checkbox("عرض نسب الثقة", False)
+    st.markdown("### 🏆 العرض")
+    top_moves = st.slider("عدد الحركات", 1, 10, 3)
+    show_overlay = st.checkbox("شبكة ملونة", True)
+    show_legend = st.checkbox("دليل العناصر", True)
+    show_details = st.checkbox("تفاصيل التعرف", False)
 
     st.markdown("---")
-    st.markdown("### 📊 عن المشروع")
-    st.info(
-        "يستخدم نموذج **CLIP** من OpenAI\n\n"
-        "للتعرف على ألوان الحلوى بدون\n"
-        "تدريب مسبق (Zero-Shot)"
-    )
 
-# ═══════════════════════════════════════
-# العنوان الرئيسي
-# ═══════════════════════════════════════
+    # ═══ دليل العناصر ═══
+    st.markdown("### 📖 دليل العناصر الكامل")
+    cat_filter = st.selectbox(
+        "اختر الفئة",
+        [
+            "الكل",
+            "📦 حلوى أساسية",
+            "⭐ حلوى خاصة",
+            "🧱 عوائق وحواجز",
+            "🧊 أغطية وطبقات",
+            "🎯 عناصر اللوحة",
+            "🍒 مكونات",
+        ]
+    )
+    cat_map = {
+        "📦 حلوى أساسية": ElementCategory.BASIC_CANDY,
+        "⭐ حلوى خاصة":   ElementCategory.SPECIAL_CANDY,
+        "🧱 عوائق وحواجز": ElementCategory.BLOCKER,
+        "🧊 أغطية وطبقات": ElementCategory.COVER,
+        "🎯 عناصر اللوحة": ElementCategory.BOARD,
+        "🍒 مكونات":      ElementCategory.INGREDIENT,
+    }
+
+    if cat_filter == "الكل":
+        display_elements = ALL_ELEMENTS
+    else:
+        cat_enum = cat_map.get(cat_filter)
+        display_elements = get_elements_by_category(cat_enum)
+
+    for elem_id, elem in display_elements.items():
+        flags = []
+        if not elem.is_movable:
+            flags.append("ثابت")
+        if elem.spreads:
+            flags.append("ينتشر⚠️")
+        if elem.has_timer:
+            flags.append("مؤقت💣")
+        if elem.layers > 1:
+            flags.append(f"{elem.layers}طبقات")
+
+        priority_class = ""
+        if elem.priority_score >= 50:
+            priority_class = "priority-high"
+        elif elem.priority_score >= 20:
+            priority_class = "priority-med"
+        else:
+            priority_class = "priority-low"
+
+        flag_str = " | ".join(flags)
+        st.markdown(
+            f'<div class="element-card {priority_class}">'
+            f'{elem.emoji} <b>{elem.name_ar}</b><br>'
+            f'<small>{elem.name_en}</small><br>'
+            f'<small>📝 {elem.special_behavior}</small>'
+            + (f'<br><small>🏷️ {flag_str}</small>' if flags else '')
+            + f'</div>',
+            unsafe_allow_html=True
+        )
+
+# ═══ العنوان ═══
+st.markdown('<p class="main-title">🍬 Candy Crush AI v2</p>', unsafe_allow_html=True)
 st.markdown(
-    '<p class="main-header">🍬 Candy Crush AI Assistant</p>',
-    unsafe_allow_html=True
-)
-st.markdown(
-    '<p class="sub-header">'
-    'مساعد ذكي يحلل لوحة اللعب ويقترح أفضل الحركات بالأسهم'
+    '<p style="text-align:center;color:#888;">'
+    'يتعرف على 50+ عنصر: حلوى، عوائق، ثلج، سجن، شوكولاتة، '
+    'فشار، قنابل، وأكثر!'
     '</p>',
     unsafe_allow_html=True
 )
 st.markdown("---")
 
-# ═══════════════════════════════════════
-# رفع الصورة
-# ═══════════════════════════════════════
-col_upload, col_info = st.columns([2, 1])
-with col_upload:
-    uploaded_file = st.file_uploader(
-        "📸 ارفع لقطة شاشة للوحة اللعب",
-        type=["jpg", "jpeg", "png", "webp"],
-        help="قص الصورة لتحتوي على لوحة اللعب فقط (مربعة قدر الإمكان)"
-    )
-with col_info:
-    st.markdown("""
-    **📋 نصائح للصورة المثالية:**
-    - ✅ قص اللوحة فقط (بدون أشرطة)
-    - ✅ صورة واضحة بدون ضبابية
-    - ✅ اللوحة كاملة ظاهرة
-    - ❌ لا ترفع أثناء حركة الحلوى
-    """)
+# ═══ رفع الصورة ═══
+uploaded = st.file_uploader(
+    "📸 ارفع لقطة شاشة للوحة اللعب",
+    type=["jpg", "jpeg", "png", "webp"]
+)
 
-# ═══════════════════════════════════════
-# التحليل الرئيسي
-# ═══════════════════════════════════════
-if uploaded_file:
-    img = Image.open(uploaded_file).convert("RGB")
+if uploaded:
+    img = Image.open(uploaded).convert("RGB")
     img_np = np.array(img)
 
-    st.markdown("### 📸 الصورة المرفوعة")
-    st.image(img, use_container_width=False, width=400)
-
-    if st.button("🚀 ابدأ التحليل الذكي", type="primary", use_container_width=True):
-        # ═══ مرحلة 1: تصنيف الشبكة ═══
-        st.markdown("---")
-        st.markdown("### 🔍 المرحلة 1: قراءة اللوحة")
-        progress = st.progress(0, text="🔍 بدء التحليل...")
-        start_time = time.time()
-
-        grid, conf_grid = classify_board(
-            img_np,
-            rows=grid_rows,
-            cols=grid_cols,
-            padding=cell_padding,
-            progress_bar=progress
+    col_img, col_info = st.columns([2, 1])
+    with col_img:
+        st.image(img, caption="الصورة المرفوعة", width=450)
+    with col_info:
+        st.info(
+            f"📐 الأبعاد: {img_np.shape[1]}×{img_np.shape[0]}\n\n"
+            f"🔢 الشبكة: {grid_rows}×{grid_cols}\n\n"
+            f"📊 إجمالي الخلايا: {grid_rows * grid_cols}"
         )
-        analysis_time = time.time() - start_time
-        progress.progress(1.0, text=f"✅ تم التحليل في {analysis_time:.1f} ثانية")
+
+    if st.button("🚀 تحليل شامل (50+ عنصر)", type="primary", use_container_width=True):
+        # ═══ تحميل المصنف ═══
+        classifier = load_classifier()
+
+        # ═══ مرحلة 1: التصنيف ═══
+        st.markdown("### 🔍 المرحلة 1: قراءة اللوحة")
+        progress = st.progress(0, "بدء التحليل...")
+        start = time.time()
+
+        # تقسيم وتصنيف
+        h, w = img_np.shape[:2]
+        cell_h = h // grid_rows
+        cell_w = w // grid_cols
+        pad_y = int(cell_h * cell_padding)
+        pad_x = int(cell_w * cell_padding)
+
+        grid = np.full((grid_rows, grid_cols), "empty", dtype=object)
+        conf_grid = np.zeros((grid_rows, grid_cols))
+
+        cells = []
+        for r in range(grid_rows):
+            for c in range(grid_cols):
+                y1 = r * cell_h + pad_y
+                y2 = (r + 1) * cell_h - pad_y
+                x1 = c * cell_w + pad_x
+                x2 = (c + 1) * cell_w - pad_x
+                cell = img_np[y1:y2, x1:x2]
+                if cell.size > 0:
+                    cell = cv2.resize(cell, (72, 72))
+                    cells.append(cell)
+
+        # تصنيف دفعي
+        progress.progress(0.3, "🧠 CLIP يحلل الخلايا...")
+        results = classifier.classify_batch([Image.fromarray(c) for c in cells])
+
+        # ملء الشبكة
+        idx = 0
+        for r in range(grid_rows):
+            for c in range(grid_cols):
+                elem_id, confidence = results[idx]
+                grid[r, c] = elem_id
+                conf_grid[r, c] = confidence
+                idx += 1
+
+        elapsed = time.time() - start
+        progress.progress(1.0, f"✅ تم في {elapsed:.1f}s")
 
         # ═══ عرض الشبكة ═══
         st.markdown("### 🎮 الشبكة المكتشفة")
@@ -327,233 +263,202 @@ if uploaded_file:
         for r in range(grid_rows):
             row_emojis = []
             for c in range(grid_cols):
-                row_emojis.append(CANDY_EMOJI.get(grid[r, c], '❓'))
+                elem = ALL_ELEMENTS.get(grid[r, c])
+                row_emojis.append(elem.emoji if elem else '❓')
             grid_text += " ".join(row_emojis) + "\n"
-        st.markdown(
-            f'<div class="grid-emoji">{grid_text}</div>',
-            unsafe_allow_html=True
-        )
+        st.markdown(f'<div class="grid-display">{grid_text}</div>', unsafe_allow_html=True)
 
-        # ═══ إحصائيات ═══
+        # ═══ دليل الرموز ═══
+        if show_legend:
+            st.markdown("**📖 دليل الرموز:**")
+            unique_elements = set(grid.flatten())
+            legend_html = ""
+            for eid in sorted(unique_elements):
+                elem = ALL_ELEMENTS.get(eid)
+                if elem:
+                    legend_html += (
+                        f'<span class="legend-item">'
+                        f'{elem.emoji} = {elem.name_ar}'
+                        f'</span>'
+                    )
+            st.markdown(legend_html, unsafe_allow_html=True)
+
+        # ═══ إحصائيات متقدمة ═══
+        st.markdown("### 📊 تحليل اللوحة")
         stats = {}
+        category_stats = {}
         for r in range(grid_rows):
             for c in range(grid_cols):
-                candy = grid[r, c]
-                stats[candy] = stats.get(candy, 0) + 1
+                eid = grid[r, c]
+                stats[eid] = stats.get(eid, 0) + 1
+                elem = ALL_ELEMENTS.get(eid)
+                if elem:
+                    cat = elem.category.value
+                    category_stats[cat] = category_stats.get(cat, 0) + 1
 
-        st.markdown("### 📊 إحصائيات اللوحة")
-        stat_cols = st.columns(min(len(stats), 6))
-        for idx, (candy, count) in enumerate(
-            sorted(stats.items(), key=lambda x: -x[1])
-        ):
-            if candy == 'empty':
-                continue
-            with stat_cols[idx % len(stat_cols)]:
-                emoji = CANDY_EMOJI.get(candy, '❓')
-                st.metric(
-                    label=f"{emoji} {candy}",
-                    value=count,
-                    delta=f"{count/(grid_rows*grid_cols)*100:.0f}%"
-                )
+        # عدادات حسب الفئة
+        cat_cols = st.columns(4)
+        cat_display = {
+            'basic_candy':   ('📦', 'حلوى أساسية'),
+            'special_candy': ('⭐', 'حلوى خاصة'),
+            'blocker':       ('🧱', 'عوائق'),
+            'cover':         ('🧊', 'أغطية'),
+        }
+        for idx, (cat_key, (emoji, name)) in enumerate(cat_display.items()):
+            with cat_cols[idx]:
+                count = category_stats.get(cat_key, 0)
+                st.metric(f"{emoji} {name}", count)
 
-        # نسبة الثقة
-        if show_confidence:
-            st.markdown("### 🎯 خريطة الثقة")
-            conf_text = ""
-            for r in range(grid_rows):
-                row_parts = []
-                for c in range(grid_cols):
-                    conf = conf_grid[r, c]
-                    if conf >= 0.7:
-                        row_parts.append(f"🟢{conf:.0%}")
-                    elif conf >= 0.4:
-                        row_parts.append(f"🟡{conf:.0%}")
-                    else:
-                        row_parts.append(f"🔴{conf:.0%}")
-                conf_text += " | ".join(row_parts) + "\n"
-            st.code(conf_text)
+        # تحذيرات العناصر الخطرة
+        danger_elements = []
+        for r in range(grid_rows):
+            for c in range(grid_cols):
+                elem = ALL_ELEMENTS.get(grid[r, c])
+                if elem and (elem.has_timer or elem.spreads or elem.priority_score >= 30):
+                    danger_elements.append((r, c, elem))
 
-        # ═══ مرحلة 2: تحليل الحركات ═══
+        if danger_elements:
+            st.markdown("### ⚠️ تنبيهات مهمة!")
+            for r, c, elem in danger_elements:
+                if elem.has_timer:
+                    st.error(f"💣 **{elem.name_ar}** في ({r},{c}) — {elem.special_behavior}")
+                elif elem.spreads:
+                    st.warning(f"🦠 **{elem.name_ar}** في ({r},{c}) — {elem.special_behavior}")
+                elif elem.priority_score >= 50:
+                    st.info(f"⭐ **{elem.name_ar}** في ({r},{c}) — {elem.special_behavior}")
+
+        # ═══ مرحلة 2: الحركات ═══
         st.markdown("---")
         st.markdown("### 🧠 المرحلة 2: تحليل الحركات")
         engine = CandyEngine(grid)
         moves = engine.find_all_moves()
 
         if not moves:
-            st.warning("⚠️ لا توجد حركات صالحة! قد تحتاج اللوحة لإعادة التحليل.")
+            st.warning("⚠️ لا توجد حركات صالحة!")
         else:
-            # ═══ عدادات سريعة ═══
-            metric_cols = st.columns(4)
-            with metric_cols[0]:
-                st.metric("🎯 إجمالي الحركات", len(moves))
-            with metric_cols[1]:
+            # عدادات
+            m_cols = st.columns(4)
+            with m_cols[0]:
+                st.metric("🎯 إجمالي", len(moves))
+            with m_cols[1]:
                 st.metric("🏆 أعلى نقاط", moves[0]['score'])
-            with metric_cols[2]:
+            with m_cols[2]:
                 max_chain = max(m.get('chain_depth', 1) for m in moves)
                 st.metric("⛓️ أطول سلسلة", f"x{max_chain}")
-            with metric_cols[3]:
-                specials_count = sum(len(m.get('special_candies', [])) for m in moves)
-                st.metric("⭐ حلوى خاصة", specials_count)
+            with m_cols[3]:
+                specials = sum(len(m.get('special_candies', [])) for m in moves)
+                st.metric("⭐ خاصة", specials)
 
             # ═══ الصورة مع الأسهم ═══
-            st.markdown("### 🏹 الحركات المقترحة على اللوحة")
-            # تحويل لـ BGR لـ OpenCV
+            st.markdown("### 🏹 الحركات على اللوحة")
             img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+            if show_overlay:
+                img_bgr = draw_grid_overlay(img_bgr, grid, opacity=0.2)
 
-            # رسم الشبكة الملونة (اختياري)
-            if show_grid_overlay:
-                img_bgr = draw_grid_overlay(img_bgr, grid, opacity=0.25)
-
-            # رسم الأسهم
-            img_with_arrows = draw_arrows_on_image(
-                img_bgr, grid, moves, top_n=top_moves
-            )
-            # تحويل للعرض
-            img_result_rgb = cv2.cvtColor(img_with_arrows, cv2.COLOR_BGR2RGB)
+            img_arrows = draw_arrows_on_image(img_bgr, grid, moves, top_n=top_moves)
+            img_result = cv2.cvtColor(img_arrows, cv2.COLOR_BGR2RGB)
             st.image(
-                img_result_rgb,
-                caption=f"🏹 أفضل {min(top_moves, len(moves))} حركات مقترحة",
+                img_result,
+                caption=f"🏹 أفضل {min(top_moves, len(moves))} حركات",
                 use_container_width=True
             )
 
-            # ═══ تفاصيل كل حركة ═══
+            # ═══ تفاصيل الحركات ═══
             st.markdown("### 📋 تفاصيل الحركات")
             medals = ['🥇', '🥈', '🥉'] + ['🎯'] * 20
             for i, move in enumerate(moves[:top_moves]):
                 r1, c1 = move['pos1']
                 r2, c2 = move['pos2']
-                candy1 = move.get('candy1', grid[r1, c1])
-                candy2 = move.get('candy2', grid[r2, c2])
-                emoji1 = CANDY_EMOJI.get(candy1, '❓')
-                emoji2 = CANDY_EMOJI.get(candy2, '❓')
+                e1 = ALL_ELEMENTS.get(grid[r1, c1])
+                e2 = ALL_ELEMENTS.get(grid[r2, c2])
+                em1 = e1.emoji if e1 else '❓'
+                em2 = e2.emoji if e2 else '❓'
+                n1 = e1.name_ar if e1 else grid[r1, c1]
+                n2 = e2.name_ar if e2 else grid[r2, c2]
 
                 with st.expander(
-                    f"{medals[i]} الحركة {i+1}: "
-                    f"{emoji1} ({r1},{c1}) ↔ {emoji2} ({r2},{c2}) "
-                    f"— {move['score']} نقطة",
+                    f"{medals[i]} {em1} ({r1},{c1}) ↔ {em2} ({r2},{c2}) — {move['score']} نقطة",
                     expanded=(i == 0)
                 ):
-                    detail_cols = st.columns([1, 1, 1])
-                    with detail_cols[0]:
-                        st.markdown(f"""
-                        **📍 من:** صف {r1}, عمود {c1}
-                        **📍 إلى:** صف {r2}, عمود {c2}
-                        **↔️ الاتجاه:** {move['direction']}
-                        """)
-                    with detail_cols[1]:
-                        st.markdown(f"""
-                        **💰 النقاط:** {move['score']}
-                        **⛓️ السلسلة:** x{move.get('chain_depth', 1)}
-                        **🏆 الأولوية:** {move.get('priority', 0)}
-                        """)
-                    with detail_cols[2]:
-                        specials = move.get('special_candies', [])
-                        if specials:
+                    dc = st.columns(3)
+                    with dc[0]:
+                        st.markdown(
+                            f"**من:** {em1} {n1} ({r1},{c1})\n\n"
+                            f"**إلى:** {em2} {n2} ({r2},{c2})\n\n"
+                            f"**الاتجاه:** {move['direction']}"
+                        )
+                    with dc[1]:
+                        st.markdown(
+                            f"**النقاط:** {move['score']}\n\n"
+                            f"**السلسلة:** x{move.get('chain_depth', 1)}\n\n"
+                            f"**الأولوية:** {move.get('priority', 0)}"
+                        )
+                    with dc[2]:
+                        spc = move.get('special_candies', [])
+                        if spc:
                             st.markdown("**⭐ حلوى خاصة:**")
-                            for s in specials:
+                            for s in spc:
                                 st.markdown(f" • {s}")
                         else:
-                            st.markdown("**⭐ حلوى خاصة:** لا يوجد")
-                        st.markdown(f"**📝 التفاصيل:** `{move['details']}`")
+                            st.markdown("لا حلوى خاصة")
+                        st.code(move.get('details', ''))
 
-                    # ═══ رسم تخطيطي للحركة ═══
-                    diagram_col1, diagram_col2 = st.columns(2)
-                    with diagram_col1:
-                        st.markdown("**🎯 الحركة:**")
-                        diagram = create_move_diagram(grid, move, cell_size=45)
-                        diagram_rgb = cv2.cvtColor(diagram, cv2.COLOR_BGR2RGB)
-                        st.image(diagram_rgb, use_container_width=True)
-                    with diagram_col2:
-                        if show_match_highlight:
-                            st.markdown("**💥 النتيجة المتوقعة:**")
-                            highlighted = highlight_matches(
-                                img_bgr, grid, move, engine
-                            )
-                            highlighted_rgb = cv2.cvtColor(
-                                highlighted, cv2.COLOR_BGR2RGB
-                            )
-                            st.image(highlighted_rgb, use_container_width=True)
+                    # رسم تخطيطي
+                    dia = create_move_diagram(grid, move, cell_size=40)
+                    dia_rgb = cv2.cvtColor(dia, cv2.COLOR_BGR2RGB)
+                    st.image(dia_rgb, width=400)
 
-            # ═══ جدول كل الحركات ═══
-            if len(moves) > top_moves:
-                with st.expander(
-                    f"📊 عرض جميع الحركات ({len(moves)} حركة)", expanded=False
-                ):
-                    table_data = []
-                    for i, m in enumerate(moves):
-                        table_data.append({
-                            '#': i + 1,
-                            'من': f"({m['pos1'][0]},{m['pos1'][1]})",
-                            'إلى': f"({m['pos2'][0]},{m['pos2'][1]})",
-                            'الاتجاه': m['direction'],
-                            'النقاط': m['score'],
-                            'السلسلة': f"x{m.get('chain_depth', 1)}",
-                            'الأولوية': m.get('priority', 0),
-                            'التفاصيل': m['details'][:40],
-                        })
-                    st.dataframe(
-                        table_data,
-                        use_container_width=True,
-                        hide_index=True
-                    )
-
-            # ═══ تحميل النتيجة ═══
+            # ═══ التحميل ═══
             st.markdown("---")
-            st.markdown("### 💾 تحميل النتائج")
-            dl_cols = st.columns(3)
-            with dl_cols[0]:
-                # صورة مع الأسهم
-                result_pil = Image.fromarray(img_result_rgb)
-                from io import BytesIO
+            dl = st.columns(3)
+            with dl[0]:
                 buf = BytesIO()
-                result_pil.save(buf, format="PNG")
+                Image.fromarray(img_result).save(buf, "PNG")
                 st.download_button(
-                    "📥 تحميل صورة الأسهم",
+                    "📥 صورة الأسهم",
                     buf.getvalue(),
-                    "candy_crush_moves.png",
+                    "moves.png",
                     "image/png",
                     use_container_width=True
                 )
-            with dl_cols[1]:
-                # الشبكة كنص
-                grid_export = ""
+            with dl[1]:
+                csv = ""
                 for r in range(grid_rows):
-                    grid_export += ",".join(grid[r]) + "\n"
+                    csv += ",".join(grid[r]) + "\n"
                 st.download_button(
-                    "📥 تحميل الشبكة (CSV)",
-                    grid_export,
-                    "candy_grid.csv",
+                    "📥 الشبكة CSV",
+                    csv,
+                    "grid.csv",
                     "text/csv",
                     use_container_width=True
                 )
-            with dl_cols[2]:
-                # تقرير الحركات
-                report = "Candy Crush AI - Move Report\n"
-                report += "=" * 40 + "\n\n"
+            with dl[2]:
+                report = "=== Candy Crush AI Report ===\n\n"
+                report += f"Grid: {grid_rows}x{grid_cols}\n"
+                report += f"Elements found: {len(stats)}\n"
+                report += f"Moves found: {len(moves)}\n\n"
                 for i, m in enumerate(moves[:top_moves]):
-                    report += f"Move {i+1}: {m['pos1']} → {m['pos2']}\n"
-                    report += f" Direction: {m['direction']}\n"
-                    report += f" Score: {m['score']}\n"
-                    report += f" Chain: x{m.get('chain_depth',1)}\n"
-                    report += f" Details: {m['details']}\n\n"
+                    report += (
+                        f"Move {i+1}: {m['pos1']}→{m['pos2']} "
+                        f"Score:{m['score']} "
+                        f"{m['details']}\n"
+                    )
                 st.download_button(
-                    "📥 تحميل التقرير",
+                    "📥 التقرير",
                     report,
-                    "move_report.txt",
+                    "report.txt",
                     "text/plain",
                     use_container_width=True
                 )
 
-# ═══════════════════════════════════════
-# الفوتر
-# ═══════════════════════════════════════
+# ═══ الفوتر ═══
 st.markdown("---")
 st.markdown(
-    """
-    <div style="text-align:center; color:#666; font-size:0.85em;">
-    🍬 Candy Crush AI Assistant | Powered by <b>CLIP</b> (OpenAI) | Built with <b>Streamlit</b><br>
-    Zero-Shot Detection — لا يحتاج تدريب مسبق
-    </div>
-    """,
+    '<div style="text-align:center;color:#666;font-size:0.8em;">'
+    '🍬 Candy Crush AI v2 | '
+    '50+ عنصر | CLIP Zero-Shot | Streamlit<br>'
+    'يكتشف: حلوى · ثلج · سجن · شوكولاتة · فشار · '
+    'قنابل · جيلي · مربى · كريمة · وأكثر!'
+    '</div>',
     unsafe_allow_html=True
     )
