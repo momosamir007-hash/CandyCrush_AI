@@ -1,86 +1,56 @@
 import streamlit as st
-from PIL import Image, ImageDraw
+from PIL import Image
 import torch
-from transformers import OwlViTProcessor, OwlViTForObjectDetection
+import numpy as np
+from transformers import CLIPProcessor, CLIPModel
+from move_engine import CandyEngine 
 
-st.set_page_config(page_title="كاندي كراش - Zero Shot", layout="centered")
-st.title("🍬 محلل كاندي كراش (بدون تدريب مسبق)")
+# إعداد الصفحة
+st.set_page_config(page_title="Candy Crush AI", layout="wide")
+st.title("🍬 مساعد كاندي كراش الذكي")
 
-# 1. تحميل النموذج المتقدم (سيأخذ وقتاً قليلاً في المرة الأولى للتحميل)
+# تحميل النموذج (مرة واحدة)
 @st.cache_resource
-def load_zero_shot_model():
-    # نموذج OWL-ViT من جوجل المتخصص في البحث بالنصوص
-    processor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch32")
-    model = OwlViTForObjectDetection.from_pretrained("google/owlvit-base-patch32")
-    return processor, model
+def load_models():
+    model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+    processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+    return model, processor
 
-with st.spinner("جاري تحميل العقل المدبر OWL-ViT..."):
-    processor, model = load_zero_shot_model()
-    st.sidebar.success("✅ النموذج جاهز للعمل!")
+model, processor = load_models()
 
-# 2. الكلمات التي نريد من الذكاء الاصطناعي البحث عنها في الصورة
-# يمكنك تعديل هذه الكلمات أو إضافتها باللغة الإنجليزية
-queries = [
-    "red candy", "blue candy", "green candy", 
-    "yellow candy", "orange candy", "purple candy", 
-    "black licorice", "ice block", "jelly"
-]
+# تعريف الألوان
+candy_labels = ['red candy', 'blue candy', 'green candy', 'yellow candy', 'orange candy', 'purple candy']
+mapping = {label: label.split()[0] for label in candy_labels}
 
-st.sidebar.markdown("**العناصر التي نبحث عنها:**")
-for q in queries:
-    st.sidebar.markdown(f"- {q}")
+uploaded_file = st.file_uploader("ارفع صورة اللوحة (مقصوصة مربعة)", type=["jpg", "png"])
 
-# 3. واجهة رفع الصور
-uploaded_file = st.file_uploader("ارفع صورة لوحة كاندي كراش...", type=["jpg", "jpeg", "png"])
-
-if uploaded_file is not None:
-    # فتح الصورة وتحويلها للصيغة المناسبة
-    image = Image.open(uploaded_file).convert("RGB")
-    st.image(image, caption="الصورة الأصلية", use_container_width=True)
-
-    # شريط التحكم بحساسية النموذج
-    threshold = st.slider("نسبة الثقة (Threshold)", min_value=0.01, max_value=0.50, value=0.10, step=0.01)
-
-    if st.button("🔍 ابحث عن العناصر"):
-        with st.spinner("الذكاء الاصطناعي يبحث الآن..."):
+if uploaded_file:
+    img = Image.open(uploaded_file).convert("RGB")
+    st.image(img, width=400)
+    
+    if st.button("🚀 ابدأ التحليل"):
+        with st.spinner("جاري قراءة اللوحة..."):
+            img_np = np.array(img)
+            h, w, _ = img_np.shape
+            grid = np.full((9, 9), "empty", dtype=object)
             
-            # تجهيز الصورة والنصوص للنموذج
-            inputs = processor(text=[queries], images=image, return_tensors="pt")
+            # تقسيم وتحليل (تبسيط لـ 9x9)
+            ch, cw = h//9, w//9
+            for r in range(9):
+                for c in range(9):
+                    cell = Image.fromarray(img_np[r*ch:(r+1)*ch, c*cw:(c+1)*cw])
+                    inputs = processor(text=candy_labels, images=cell, return_tensors="pt", padding=True)
+                    outputs = model(**inputs)
+                    idx = outputs.logits_per_image.argmax().item()
+                    grid[r, c] = mapping[candy_labels[idx]]
             
-            # تنفيذ البحث (بدون حسابات التدريب لتسريع العملية)
-            with torch.no_grad():
-                outputs = model(**inputs)
-
-            # معالجة النتائج وتحديد حجم الصورة لضبط المربعات
-            target_sizes = torch.tensor([image.size[::-1]])
+            # تشغيل المحرك
+            engine = CandyEngine(grid)
+            moves = engine.find_all_moves()
             
-            # تم تصحيح هذا السطر بإضافة image_processor
-            results = processor.image_processor.post_process_object_detection(
-                outputs=outputs, 
-                target_sizes=target_sizes, 
-                threshold=threshold
-            )
-            
-            # أخذ نتائج أول صورة (لأننا رفعنا صورة واحدة)
-            i = 0
-            boxes, scores, labels = results[i]["boxes"], results[i]["scores"], results[i]["labels"]
-            
-            # رسم المربعات على الصورة
-            draw = ImageDraw.Draw(image)
-            count = 0
-            
-            for box, score, label in zip(boxes, scores, labels):
-                box = [round(i, 2) for i in box.tolist()]
-                label_name = queries[label.item()]
-                confidence = round(score.item(), 2)
-                
-                # رسم المربع بخط عريض (أحمر)
-                draw.rectangle(box, outline="red", width=4)
-                
-                # كتابة اسم العنصر ونسبة الثقة فوقه
-                draw.text((box[0], box[1] - 15), f"{label_name}: {confidence}", fill="white")
-                count += 1
-                
-            # عرض النتيجة النهائية
-            st.image(image, caption="اللوحة بعد التحليل النصي", use_container_width=True)
-            st.success(f"تم اكتشاف {count} عنصر بناءً على الوصف!")
+            st.subheader("💡 أفضل الحركات:")
+            if moves:
+                for m in moves[:3]:
+                    st.success(f"حرك من {m['pos1']} إلى {m['pos2']} ({m['direction']}) ➜ {m['score']} نقطة")
+            else:
+                st.warning("لا توجد حركات واضحة!")
