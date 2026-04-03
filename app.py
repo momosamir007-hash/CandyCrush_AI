@@ -1,13 +1,15 @@
+import sys
+import subprocess
+
 # ==========================================
-# 1. خدعة النينجا لحل مشكلة OpenCV في السيرفر
-# يجب أن تبقى هذه الأسطر في أعلى الملف دائماً
+# 1. الترياق النهائي لمشكلة OpenCV في السيرفر
+# نستخدم sys.executable لاستهداف بيئة بايثون بدقة
 # ==========================================
-import os
 try:
     import cv2
 except ImportError:
-    os.system("pip uninstall -y opencv-python opencv-python-headless")
-    os.system("pip install opencv-python-headless")
+    subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "opencv-python", "opencv-python-headless"], capture_output=True)
+    subprocess.run([sys.executable, "-m", "pip", "install", "opencv-python-headless"], capture_output=True)
     import cv2
 
 # ==========================================
@@ -18,6 +20,7 @@ from PIL import Image
 import numpy as np
 from ultralytics import YOLO
 from move_engine import CandyEngine 
+import os
 
 st.set_page_config(page_title="Candy Crush AI", layout="centered")
 st.title("🍬 العرّاف: مساعد كاندي كراش")
