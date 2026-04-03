@@ -1,23 +1,7 @@
-import sys
-import subprocess
-
-# ==========================================
-# 1. الترياق النهائي لمشكلة OpenCV في السيرفر
-# نستخدم sys.executable لاستهداف بيئة بايثون بدقة
-# ==========================================
-try:
-    import cv2
-except ImportError:
-    subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "opencv-python", "opencv-python-headless"], capture_output=True)
-    subprocess.run([sys.executable, "-m", "pip", "install", "opencv-python-headless"], capture_output=True)
-    import cv2
-
-# ==========================================
-# 2. استيراد باقي المكتبات وبدء التطبيق
-# ==========================================
 import streamlit as st
 from PIL import Image
 import numpy as np
+import cv2
 from ultralytics import YOLO
 from move_engine import CandyEngine 
 import os
@@ -42,12 +26,7 @@ if model is None:
 
 st.sidebar.success("✅ النموذج جاهز للعمل!")
 
-# خريطة الألوان
-class_map = {
-    0: 'red', 1: 'blue', 2: 'green', 
-    3: 'yellow', 4: 'orange', 5: 'purple', 
-    6: 'blocker'
-}
+class_map = {0: 'red', 1: 'blue', 2: 'green', 3: 'yellow', 4: 'orange', 5: 'purple', 6: 'blocker'}
 
 st.info("💡 نصيحة: ارفع صورة مقصوصة تحتوي على لوحة اللعب فقط (9x9) للحصول على أعلى دقة.")
 uploaded_file = st.file_uploader("📷 ارفع صورة اللوحة...", type=["jpg", "png", "jpeg"])
@@ -58,15 +37,12 @@ if uploaded_file and st.button("🚀 تحليل ورسم أفضل حركة"):
     h, w, _ = img_np.shape
 
     with st.spinner("الذكاء الاصطناعي يقرأ اللوحة..."):
-        # التوقع باستخدام YOLO
         results = model.predict(img_np, conf=0.35)
         boxes = results[0].boxes
         
-        # بناء الشبكة 9x9 (مصفوفة فارغة)
         grid = np.full((9, 9), 'empty', dtype=object)
         cell_w, cell_h = w / 9, h / 9
         
-        # توزيع الحلوى المكتشفة على خلايا الشبكة
         for box in boxes:
             x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
             cls = int(box.cls[0].item())
@@ -77,7 +53,6 @@ if uploaded_file and st.button("🚀 تحليل ورسم أفضل حركة"):
             if 0 <= row < 9 and 0 <= col < 9:
                 grid[row, col] = class_map.get(cls, 'empty')
 
-        # تشغيل المحرك الاستراتيجي
         engine = CandyEngine(grid)
         moves = engine.find_all_moves()
 
@@ -97,7 +72,6 @@ if uploaded_file and st.button("🚀 تحليل ورسم أفضل حركة"):
             p1_pixel = get_pixel_coords(best_move['pos1'], w, h)
             p2_pixel = get_pixel_coords(best_move['pos2'], w, h)
 
-            # رسم دائرة شفافة وسهم أخضر
             overlay = img_with_arrow.copy()
             radius = int(min(cell_w, cell_h) * 0.4)
             cv2.circle(overlay, p1_pixel, radius, (0, 255, 0), -1) 
