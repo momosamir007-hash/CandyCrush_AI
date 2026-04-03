@@ -1,7 +1,7 @@
-# app_v2.py
+# app.py
 """
 ╔══════════════════════════════════════════════════╗
-║ 🍬 Candy Crush AI v2 - يتعرف على 50+ عنصر ║
+║ 🍬 Candy Crush AI v2 - Fixed for Cloud ║
 ╚══════════════════════════════════════════════════╝
 """
 import streamlit as st
@@ -15,7 +15,6 @@ from candy_elements import (
     ALL_ELEMENTS,
     ElementCategory,
     get_elements_by_category,
-    print_catalog
 )
 from classifier_v2 import CandyCrushClassifierV2
 from move_engine import CandyEngine
@@ -27,7 +26,9 @@ from grid_visualizer import (
     highlight_matches,
 )
 
-# ═══ إعداد الصفحة ═══
+# ═══════════════════════════════════════
+# إعداد الصفحة
+# ═══════════════════════════════════════
 st.set_page_config(
     page_title="🍬 Candy Crush AI v2",
     page_icon="🍬",
@@ -35,7 +36,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ═══ CSS ═══
+# ═══════════════════════════════════════
+# CSS
+# ═══════════════════════════════════════
 st.markdown("""
 <style>
 .main-title {
@@ -43,17 +46,22 @@ st.markdown("""
     background: linear-gradient(90deg, #ff6b6b, #ffd93d, #6bcb77, #4d96ff, #9b59b6);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-    font-size: 2.8em;
+    font-size: 2.5em;
     font-weight: 900;
 }
+.subtitle {
+    text-align: center;
+    color: #888;
+    font-size: 1em;
+}
 .element-card {
-    background: #1a1a2e;
-    border-radius: 12px;
-    padding: 12px;
-    margin: 6px 0;
+    background: #1e1e2e;
+    border-radius: 10px;
+    padding: 10px;
+    margin: 5px 0;
     border-left: 4px solid #ffd93d;
-    color: white;
-    font-size: 0.9em;
+    color: #ddd;
+    font-size: 0.85em;
 }
 .priority-high {
     border-left-color: #ff4444;
@@ -65,44 +73,57 @@ st.markdown("""
     border-left-color: #44ff44;
 }
 .grid-display {
-    font-size: 1.4em;
-    letter-spacing: 4px;
+    font-size: 1.3em;
+    letter-spacing: 3px;
     line-height: 2;
     font-family: monospace;
     text-align: center;
-}
-.stat-metric {
-    background: #16213e;
-    border-radius: 10px;
+    background: #1a1a2e;
     padding: 15px;
-    text-align: center;
-    color: white;
-    margin: 5px;
+    border-radius: 10px;
 }
 .legend-item {
     display: inline-block;
-    margin: 3px 8px;
-    font-size: 0.95em;
+    margin: 2px 6px;
+    font-size: 0.9em;
+}
+.warning-box {
+    background: #3a1a1a;
+    border: 1px solid #ff4444;
+    border-radius: 8px;
+    padding: 10px;
+    margin: 5px 0;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ═══ تحميل النموذج ═══
+# ═══════════════════════════════════════
+# تحميل النموذج — مع معالجة الأخطاء
+# ═══════════════════════════════════════
 @st.cache_resource
 def load_classifier():
-    return CandyCrushClassifierV2(
-        model_name="openai/clip-vit-base-patch32",
-        active_categories=[
-            ElementCategory.BASIC_CANDY,
-            ElementCategory.SPECIAL_CANDY,
-            ElementCategory.BLOCKER,
-            ElementCategory.COVER,
-            ElementCategory.BOARD,
-            ElementCategory.INGREDIENT,
-        ]
-    )
+    """تحميل المصنف مرة واحدة فقط"""
+    try:
+        classifier = CandyCrushClassifierV2(
+            model_name="openai/clip-vit-base-patch32",
+            device="cpu",  # CPU أكثر توافقاً على Cloud
+            active_categories=[
+                ElementCategory.BASIC_CANDY,
+                ElementCategory.SPECIAL_CANDY,
+                ElementCategory.BLOCKER,
+                ElementCategory.COVER,
+                ElementCategory.BOARD,
+                ElementCategory.INGREDIENT,
+            ]
+        )
+        return classifier
+    except Exception as e:
+        st.error(f"❌ خطأ في تحميل النموذج: {e}")
+        return None
 
-# ═══ الشريط الجانبي ═══
+# ═══════════════════════════════════════
+# الشريط الجانبي
+# ═══════════════════════════════════════
 with st.sidebar:
     st.markdown("## ⚙️ الإعدادات")
     st.markdown("### 📐 الشبكة")
@@ -115,41 +136,44 @@ with st.sidebar:
     st.markdown("### 🏆 العرض")
     top_moves = st.slider("عدد الحركات", 1, 10, 3)
     show_overlay = st.checkbox("شبكة ملونة", True)
-    show_legend = st.checkbox("دليل العناصر", True)
-    show_details = st.checkbox("تفاصيل التعرف", False)
+    show_legend = st.checkbox("دليل الرموز", True)
 
     st.markdown("---")
 
-    # ═══ دليل العناصر ═══
-    st.markdown("### 📖 دليل العناصر الكامل")
+    # دليل العناصر
+    st.markdown("### 📖 دليل العناصر")
     cat_filter = st.selectbox(
-        "اختر الفئة",
+        "الفئة",
         [
             "الكل",
             "📦 حلوى أساسية",
             "⭐ حلوى خاصة",
-            "🧱 عوائق وحواجز",
-            "🧊 أغطية وطبقات",
+            "🧱 عوائق",
+            "🧊 أغطية",
             "🎯 عناصر اللوحة",
             "🍒 مكونات",
         ]
     )
+
     cat_map = {
         "📦 حلوى أساسية": ElementCategory.BASIC_CANDY,
-        "⭐ حلوى خاصة":   ElementCategory.SPECIAL_CANDY,
-        "🧱 عوائق وحواجز": ElementCategory.BLOCKER,
-        "🧊 أغطية وطبقات": ElementCategory.COVER,
+        "⭐ حلوى خاصة": ElementCategory.SPECIAL_CANDY,
+        "🧱 عوائق": ElementCategory.BLOCKER,
+        "🧊 أغطية": ElementCategory.COVER,
         "🎯 عناصر اللوحة": ElementCategory.BOARD,
-        "🍒 مكونات":      ElementCategory.INGREDIENT,
+        "🍒 مكونات": ElementCategory.INGREDIENT,
     }
 
     if cat_filter == "الكل":
-        display_elements = ALL_ELEMENTS
+        display_elems = ALL_ELEMENTS
     else:
-        cat_enum = cat_map.get(cat_filter)
-        display_elements = get_elements_by_category(cat_enum)
+        cat_e = cat_map.get(cat_filter)
+        if cat_e:
+            display_elems = get_elements_by_category(cat_e)
+        else:
+            display_elems = ALL_ELEMENTS
 
-    for elem_id, elem in display_elements.items():
+    for eid, elem in display_elems.items():
         flags = []
         if not elem.is_movable:
             flags.append("ثابت")
@@ -158,135 +182,162 @@ with st.sidebar:
         if elem.has_timer:
             flags.append("مؤقت💣")
         if elem.layers > 1:
-            flags.append(f"{elem.layers}طبقات")
+            flags.append(f"{elem.layers}ط")
 
-        priority_class = ""
+        pc = "priority-low"
         if elem.priority_score >= 50:
-            priority_class = "priority-high"
+            pc = "priority-high"
         elif elem.priority_score >= 20:
-            priority_class = "priority-med"
-        else:
-            priority_class = "priority-low"
+            pc = "priority-med"
 
         flag_str = " | ".join(flags)
-        st.markdown(
-            f'<div class="element-card {priority_class}">'
+        card_html = (
+            f'<div class="element-card {pc}">'
             f'{elem.emoji} <b>{elem.name_ar}</b><br>'
             f'<small>{elem.name_en}</small><br>'
             f'<small>📝 {elem.special_behavior}</small>'
-            + (f'<br><small>🏷️ {flag_str}</small>' if flags else '')
-            + f'</div>',
-            unsafe_allow_html=True
         )
+        if flags:
+            card_html += f'<br><small>🏷️ {flag_str}</small>'
+        card_html += '</div>'
+        st.markdown(card_html, unsafe_allow_html=True)
 
-# ═══ العنوان ═══
+# ═══════════════════════════════════════
+# المحتوى الرئيسي
+# ═══════════════════════════════════════
 st.markdown('<p class="main-title">🍬 Candy Crush AI v2</p>', unsafe_allow_html=True)
 st.markdown(
-    '<p style="text-align:center;color:#888;">'
-    'يتعرف على 50+ عنصر: حلوى، عوائق، ثلج، سجن، شوكولاتة، '
-    'فشار، قنابل، وأكثر!'
+    '<p class="subtitle">'
+    'يتعرف على 50+ عنصر: حلوى · ثلج · سجن · شوكولاتة · '
+    'فشار · قنابل · جيلي · مربى · وأكثر!'
     '</p>',
     unsafe_allow_html=True
 )
 st.markdown("---")
 
 # ═══ رفع الصورة ═══
-uploaded = st.file_uploader(
-    "📸 ارفع لقطة شاشة للوحة اللعب",
-    type=["jpg", "jpeg", "png", "webp"]
-)
+col_up, col_tips = st.columns([2, 1])
+with col_up:
+    uploaded = st.file_uploader(
+        "📸 ارفع لقطة شاشة للوحة",
+        type=["jpg", "jpeg", "png", "webp"]
+    )
+with col_tips:
+    st.markdown("""
+    **📋 نصائح:**
+    - ✅ قص اللوحة فقط
+    - ✅ صورة واضحة
+    - ❌ لا ترفع أثناء الحركة
+    """)
 
+# ═══════════════════════════════════════
+# التحليل
+# ═══════════════════════════════════════
 if uploaded:
     img = Image.open(uploaded).convert("RGB")
     img_np = np.array(img)
 
-    col_img, col_info = st.columns([2, 1])
-    with col_img:
-        st.image(img, caption="الصورة المرفوعة", width=450)
-    with col_info:
-        st.info(
-            f"📐 الأبعاد: {img_np.shape[1]}×{img_np.shape[0]}\n\n"
-            f"🔢 الشبكة: {grid_rows}×{grid_cols}\n\n"
-            f"📊 إجمالي الخلايا: {grid_rows * grid_cols}"
-        )
+    st.image(img, caption="📸 الصورة المرفوعة", width=400)
 
-    if st.button("🚀 تحليل شامل (50+ عنصر)", type="primary", use_container_width=True):
+    if st.button("🚀 ابدأ التحليل الذكي", type="primary", use_container_width=True):
         # ═══ تحميل المصنف ═══
-        classifier = load_classifier()
+        with st.spinner("🔄 تحميل نموذج الذكاء الاصطناعي..."):
+            classifier = load_classifier()
+        if classifier is None:
+            st.error("❌ فشل تحميل النموذج!")
+            st.stop()
 
         # ═══ مرحلة 1: التصنيف ═══
+        st.markdown("---")
         st.markdown("### 🔍 المرحلة 1: قراءة اللوحة")
-        progress = st.progress(0, "بدء التحليل...")
-        start = time.time()
+        progress = st.progress(0, "🔍 بدء التحليل...")
+        start_time = time.time()
 
-        # تقسيم وتصنيف
         h, w = img_np.shape[:2]
         cell_h = h // grid_rows
         cell_w = w // grid_cols
         pad_y = int(cell_h * cell_padding)
         pad_x = int(cell_w * cell_padding)
 
-        grid = np.full((grid_rows, grid_cols), "empty", dtype=object)
-        conf_grid = np.zeros((grid_rows, grid_cols))
-
-        cells = []
+        # ═══ قص الخلايا ═══
+        cells_pil = []
+        total_cells = grid_rows * grid_cols
+        count = 0
         for r in range(grid_rows):
             for c in range(grid_cols):
                 y1 = r * cell_h + pad_y
                 y2 = (r + 1) * cell_h - pad_y
                 x1 = c * cell_w + pad_x
                 x2 = (c + 1) * cell_w - pad_x
+                # حماية الحدود
+                y1 = max(0, y1)
+                y2 = min(h, y2)
+                x1 = max(0, x1)
+                x2 = min(w, x2)
                 cell = img_np[y1:y2, x1:x2]
-                if cell.size > 0:
-                    cell = cv2.resize(cell, (72, 72))
-                    cells.append(cell)
+                if cell.size > 0 and cell.shape[0] > 5 and cell.shape[1] > 5:
+                    cell_resized = cv2.resize(cell, (72, 72))
+                    cell_pil = Image.fromarray(cell_resized)
+                else:
+                    cell_pil = Image.new("RGB", (72, 72), (0, 0, 0))
+                cells_pil.append(cell_pil)
+                count += 1
+                progress.progress(
+                    count / total_cells * 0.3,
+                    f"📐 قص الخلايا... {count}/{total_cells}"
+                )
 
-        # تصنيف دفعي
-        progress.progress(0.3, "🧠 CLIP يحلل الخلايا...")
-        results = classifier.classify_batch([Image.fromarray(c) for c in cells])
+        # ═══ تصنيف دفعي ═══
+        progress.progress(0.3, "🧠 CLIP يحلل...")
+        results = classifier.classify_batch(cells_pil, batch_size=16)
 
-        # ملء الشبكة
+        # ═══ ملء الشبكة ═══
+        grid = np.full((grid_rows, grid_cols), "empty", dtype=object)
+        conf_grid = np.zeros((grid_rows, grid_cols))
         idx = 0
         for r in range(grid_rows):
             for c in range(grid_cols):
-                elem_id, confidence = results[idx]
-                grid[r, c] = elem_id
-                conf_grid[r, c] = confidence
+                if idx < len(results):
+                    elem_id, confidence = results[idx]
+                    grid[r, c] = elem_id
+                    conf_grid[r, c] = confidence
                 idx += 1
 
-        elapsed = time.time() - start
-        progress.progress(1.0, f"✅ تم في {elapsed:.1f}s")
+        elapsed = time.time() - start_time
+        progress.progress(1.0, f"✅ تم في {elapsed:.1f} ثانية")
 
-        # ═══ عرض الشبكة ═══
+        # ═══════════════════════════════════
+        # عرض الشبكة
+        # ═══════════════════════════════════
         st.markdown("### 🎮 الشبكة المكتشفة")
-        grid_text = ""
+        grid_text_lines = []
         for r in range(grid_rows):
             row_emojis = []
             for c in range(grid_cols):
                 elem = ALL_ELEMENTS.get(grid[r, c])
-                row_emojis.append(elem.emoji if elem else '❓')
-            grid_text += " ".join(row_emojis) + "\n"
-        st.markdown(f'<div class="grid-display">{grid_text}</div>', unsafe_allow_html=True)
+                emoji = elem.emoji if elem else '❓'
+                row_emojis.append(emoji)
+            grid_text_lines.append(" ".join(row_emojis))
+        grid_display = "\n".join(grid_text_lines)
+        st.markdown(f'<div class="grid-display">{grid_display}</div>', unsafe_allow_html=True)
 
         # ═══ دليل الرموز ═══
         if show_legend:
-            st.markdown("**📖 دليل الرموز:**")
-            unique_elements = set(grid.flatten())
-            legend_html = ""
-            for eid in sorted(unique_elements):
+            unique_ids = set(grid.flatten())
+            legend_parts = []
+            for eid in sorted(unique_ids):
                 elem = ALL_ELEMENTS.get(eid)
-                if elem:
-                    legend_html += (
-                        f'<span class="legend-item">'
-                        f'{elem.emoji} = {elem.name_ar}'
-                        f'</span>'
-                    )
-            st.markdown(legend_html, unsafe_allow_html=True)
+                if elem and eid != 'empty':
+                    legend_parts.append(f'<span class="legend-item">{elem.emoji}={elem.name_ar}</span>')
+            if legend_parts:
+                st.markdown("**📖 الرموز:** " + " ".join(legend_parts), unsafe_allow_html=True)
 
-        # ═══ إحصائيات متقدمة ═══
-        st.markdown("### 📊 تحليل اللوحة")
+        # ═══════════════════════════════════
+        # إحصائيات
+        # ═══════════════════════════════════
+        st.markdown("### 📊 إحصائيات")
         stats = {}
-        category_stats = {}
+        cat_stats = {}
         for r in range(grid_rows):
             for c in range(grid_cols):
                 eid = grid[r, c]
@@ -294,40 +345,38 @@ if uploaded:
                 elem = ALL_ELEMENTS.get(eid)
                 if elem:
                     cat = elem.category.value
-                    category_stats[cat] = category_stats.get(cat, 0) + 1
+                    cat_stats[cat] = cat_stats.get(cat, 0) + 1
 
-        # عدادات حسب الفئة
-        cat_cols = st.columns(4)
-        cat_display = {
-            'basic_candy':   ('📦', 'حلوى أساسية'),
-            'special_candy': ('⭐', 'حلوى خاصة'),
-            'blocker':       ('🧱', 'عوائق'),
-            'cover':         ('🧊', 'أغطية'),
-        }
-        for idx, (cat_key, (emoji, name)) in enumerate(cat_display.items()):
-            with cat_cols[idx]:
-                count = category_stats.get(cat_key, 0)
-                st.metric(f"{emoji} {name}", count)
+        scols = st.columns(min(6, len(stats)))
+        sorted_stats = sorted(stats.items(), key=lambda x: -x[1])
+        for idx_s, (eid, cnt) in enumerate(sorted_stats[:6]):
+            if eid == 'empty':
+                continue
+            elem = ALL_ELEMENTS.get(eid)
+            if elem:
+                with scols[idx_s % len(scols)]:
+                    pct = cnt / total_cells * 100
+                    st.metric(f"{elem.emoji} {elem.name_ar}", cnt, f"{pct:.0f}%")
 
-        # تحذيرات العناصر الخطرة
-        danger_elements = []
+        # ═══ تحذيرات العناصر الخطرة ═══
+        dangers = []
         for r in range(grid_rows):
             for c in range(grid_cols):
                 elem = ALL_ELEMENTS.get(grid[r, c])
                 if elem and (elem.has_timer or elem.spreads or elem.priority_score >= 30):
-                    danger_elements.append((r, c, elem))
+                    dangers.append((r, c, elem))
 
-        if danger_elements:
-            st.markdown("### ⚠️ تنبيهات مهمة!")
-            for r, c, elem in danger_elements:
+        if dangers:
+            st.markdown("### ⚠️ تنبيهات!")
+            for r, c, elem in dangers:
                 if elem.has_timer:
-                    st.error(f"💣 **{elem.name_ar}** في ({r},{c}) — {elem.special_behavior}")
+                    st.error(f"💣 **{elem.name_ar}** ({r},{c}) — {elem.special_behavior}")
                 elif elem.spreads:
-                    st.warning(f"🦠 **{elem.name_ar}** في ({r},{c}) — {elem.special_behavior}")
-                elif elem.priority_score >= 50:
-                    st.info(f"⭐ **{elem.name_ar}** في ({r},{c}) — {elem.special_behavior}")
+                    st.warning(f"🦠 **{elem.name_ar}** ({r},{c}) — {elem.special_behavior}")
 
-        # ═══ مرحلة 2: الحركات ═══
+        # ═══════════════════════════════════
+        # مرحلة 2: الحركات
+        # ═══════════════════════════════════
         st.markdown("---")
         st.markdown("### 🧠 المرحلة 2: تحليل الحركات")
         engine = CandyEngine(grid)
@@ -337,19 +386,19 @@ if uploaded:
             st.warning("⚠️ لا توجد حركات صالحة!")
         else:
             # عدادات
-            m_cols = st.columns(4)
-            with m_cols[0]:
+            mc = st.columns(4)
+            with mc[0]:
                 st.metric("🎯 إجمالي", len(moves))
-            with m_cols[1]:
+            with mc[1]:
                 st.metric("🏆 أعلى نقاط", moves[0]['score'])
-            with m_cols[2]:
-                max_chain = max(m.get('chain_depth', 1) for m in moves)
-                st.metric("⛓️ أطول سلسلة", f"x{max_chain}")
-            with m_cols[3]:
-                specials = sum(len(m.get('special_candies', [])) for m in moves)
-                st.metric("⭐ خاصة", specials)
+            with mc[2]:
+                mx_chain = max(m.get('chain_depth', 1) for m in moves)
+                st.metric("⛓️ سلسلة", f"x{mx_chain}")
+            with mc[3]:
+                n_specials = sum(len(m.get('special_candies', [])) for m in moves)
+                st.metric("⭐ خاصة", n_specials)
 
-            # ═══ الصورة مع الأسهم ═══
+            # ═══ صورة مع الأسهم ═══
             st.markdown("### 🏹 الحركات على اللوحة")
             img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
             if show_overlay:
@@ -377,43 +426,65 @@ if uploaded:
                 n2 = e2.name_ar if e2 else grid[r2, c2]
 
                 with st.expander(
-                    f"{medals[i]} {em1} ({r1},{c1}) ↔ {em2} ({r2},{c2}) — {move['score']} نقطة",
+                    f"{medals[i]} {em1}({r1},{c1}) ↔ {em2}({r2},{c2}) — {move['score']} نقطة",
                     expanded=(i == 0)
                 ):
                     dc = st.columns(3)
                     with dc[0]:
                         st.markdown(
-                            f"**من:** {em1} {n1} ({r1},{c1})\n\n"
-                            f"**إلى:** {em2} {n2} ({r2},{c2})\n\n"
+                            f"**من:** {em1} {n1}\n\n"
+                            f"**موقع:** ({r1},{c1})\n\n"
                             f"**الاتجاه:** {move['direction']}"
                         )
                     with dc[1]:
                         st.markdown(
-                            f"**النقاط:** {move['score']}\n\n"
-                            f"**السلسلة:** x{move.get('chain_depth', 1)}\n\n"
-                            f"**الأولوية:** {move.get('priority', 0)}"
+                            f"**إلى:** {em2} {n2}\n\n"
+                            f"**موقع:** ({r2},{c2})\n\n"
+                            f"**النقاط:** {move['score']}"
                         )
                     with dc[2]:
+                        ch = move.get('chain_depth', 1)
+                        pr = move.get('priority', 0)
                         spc = move.get('special_candies', [])
-                        if spc:
-                            st.markdown("**⭐ حلوى خاصة:**")
-                            for s in spc:
-                                st.markdown(f" • {s}")
-                        else:
-                            st.markdown("لا حلوى خاصة")
-                        st.code(move.get('details', ''))
+                        st.markdown(
+                            f"**السلسلة:** x{ch}\n\n"
+                            f"**الأولوية:** {pr}\n\n"
+                            f"**خاصة:** {', '.join(spc) if spc else 'لا'}"
+                        )
+                    details = move.get('details', '')
+                    if details:
+                        st.code(details)
 
                     # رسم تخطيطي
-                    dia = create_move_diagram(grid, move, cell_size=40)
-                    dia_rgb = cv2.cvtColor(dia, cv2.COLOR_BGR2RGB)
-                    st.image(dia_rgb, width=400)
+                    try:
+                        dia = create_move_diagram(grid, move, cell_size=40)
+                        dia_rgb = cv2.cvtColor(dia, cv2.COLOR_BGR2RGB)
+                        st.image(dia_rgb, width=400)
+                    except Exception:
+                        pass
 
-            # ═══ التحميل ═══
+            # ═══ جدول كل الحركات ═══
+            if len(moves) > top_moves:
+                with st.expander(f"📊 كل الحركات ({len(moves)})"):
+                    table = []
+                    for i, m in enumerate(moves):
+                        table.append({
+                            '#': i + 1,
+                            'من': str(m['pos1']),
+                            'إلى': str(m['pos2']),
+                            'اتجاه': m['direction'],
+                            'نقاط': m['score'],
+                            'سلسلة': m.get('chain_depth', 1),
+                            'أولوية': m.get('priority', 0),
+                        })
+                    st.dataframe(table, use_container_width=True, hide_index=True)
+
+            # ═══ تحميل ═══
             st.markdown("---")
             dl = st.columns(3)
             with dl[0]:
                 buf = BytesIO()
-                Image.fromarray(img_result).save(buf, "PNG")
+                Image.fromarray(img_result).save(buf, format="PNG")
                 st.download_button(
                     "📥 صورة الأسهم",
                     buf.getvalue(),
@@ -422,30 +493,25 @@ if uploaded:
                     use_container_width=True
                 )
             with dl[1]:
-                csv = ""
+                csv_str = ""
                 for r in range(grid_rows):
-                    csv += ",".join(grid[r]) + "\n"
+                    csv_str += ",".join(str(grid[r, c]) for c in range(grid_cols)) + "\n"
                 st.download_button(
                     "📥 الشبكة CSV",
-                    csv,
+                    csv_str,
                     "grid.csv",
                     "text/csv",
                     use_container_width=True
                 )
             with dl[2]:
-                report = "=== Candy Crush AI Report ===\n\n"
-                report += f"Grid: {grid_rows}x{grid_cols}\n"
-                report += f"Elements found: {len(stats)}\n"
-                report += f"Moves found: {len(moves)}\n\n"
+                rpt = "=== Candy Crush AI Report ===\n\n"
+                rpt += f"Grid: {grid_rows}x{grid_cols}\n"
+                rpt += f"Total moves: {len(moves)}\n\n"
                 for i, m in enumerate(moves[:top_moves]):
-                    report += (
-                        f"Move {i+1}: {m['pos1']}→{m['pos2']} "
-                        f"Score:{m['score']} "
-                        f"{m['details']}\n"
-                    )
+                    rpt += f"#{i+1}: {m['pos1']}→{m['pos2']} Score:{m['score']} {m.get('details','')}\n"
                 st.download_button(
                     "📥 التقرير",
-                    report,
+                    rpt,
                     "report.txt",
                     "text/plain",
                     use_container_width=True
@@ -455,10 +521,7 @@ if uploaded:
 st.markdown("---")
 st.markdown(
     '<div style="text-align:center;color:#666;font-size:0.8em;">'
-    '🍬 Candy Crush AI v2 | '
-    '50+ عنصر | CLIP Zero-Shot | Streamlit<br>'
-    'يكتشف: حلوى · ثلج · سجن · شوكولاتة · فشار · '
-    'قنابل · جيلي · مربى · كريمة · وأكثر!'
+    '🍬 Candy Crush AI v2 | 50+ عنصر | CLIP Zero-Shot | Streamlit'
     '</div>',
     unsafe_allow_html=True
-    )
+        )
