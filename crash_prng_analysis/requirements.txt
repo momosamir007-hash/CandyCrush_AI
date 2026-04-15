@@ -1,7 +1,0 @@
-# requirements.txt
-streamlit
-pandas
-numpy
-scipy
-plotly
-scikit-learn
