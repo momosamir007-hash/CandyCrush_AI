@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# app.py — محلل أنماط Crash المتقدم
+# app.py — محلل أنماط Crash الذكي
 
 import streamlit as st
 import pandas as pd
@@ -8,10 +8,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy import stats
-from scipy.stats import chi2, ks_2samp
-from scipy.fft import fft, fftfreq, ifft
+from scipy.stats import chi2
+from scipy.fft import fft, fftfreq
 from scipy.signal import find_peaks, welch
-from scipy.optimize import curve_fit
 from collections import Counter, defaultdict
 import json
 import warnings
@@ -19,7 +18,7 @@ warnings.filterwarnings('ignore')
 
 # ══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="🔬 Crash Pattern Analyzer Pro",
+    page_title="🔬 Crash Pattern Intelligence",
     page_icon="🔬",
     layout="wide"
 )
@@ -28,10 +27,10 @@ st.set_page_config(
 #                    دوال مساعدة
 # ══════════════════════════════════════════════════════════════
 def to_python(obj):
-    if isinstance(obj, np.bool_):   return bool(obj)
-    if isinstance(obj, np.integer): return int(obj)
-    if isinstance(obj, np.floating):return float(obj)
-    if isinstance(obj, np.ndarray): return obj.tolist()
+    if isinstance(obj, np.bool_):    return bool(obj)
+    if isinstance(obj, np.integer):  return int(obj)
+    if isinstance(obj, np.floating): return float(obj)
+    if isinstance(obj, np.ndarray):  return obj.tolist()
     if isinstance(obj, dict):
         return {str(k): to_python(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -39,945 +38,913 @@ def to_python(obj):
     return obj
 
 
-def categorize(v):
-    if v < 1.5:  return 'VL'
-    if v < 2.0:  return 'L'
-    if v < 3.0:  return 'M'
-    if v < 5.0:  return 'H'
-    if v < 10.0: return 'VH'
-    return 'EX'
-
-CAT_LABELS = {
-    'VL':'<1.5x','L':'1.5-2x','M':'2-3x',
-    'H':'3-5x','VH':'5-10x','EX':'>10x'
-}
-CAT_COLORS = {
-    'VL':'#e74c3c','L':'#e67e22','M':'#f1c40f',
-    'H':'#2ecc71','VH':'#3498db','EX':'#9b59b6'
-}
-CAT_ORDER = ['VL','L','M','H','VH','EX']
+def safe_linregress(x, y):
+    """انحدار خطي آمن بدون statsmodels"""
+    try:
+        slope, intercept, r, p, se = stats.linregress(x, y)
+        return float(slope), float(intercept), float(r**2)
+    except Exception:
+        return 0.0, 0.0, 0.0
 
 
 # ══════════════════════════════════════════════════════════════
-#         1. محلل الأنماط العميق
+#         1. محرك اكتشاف الأنماط الذكي
 # ══════════════════════════════════════════════════════════════
-class DeepPatternAnalyzer:
+class SmartPatternEngine:
     """
-    يحلل البنية العميقة لتسلسل Crash:
-    - توزيع Power Law والانحراف عنه
-    - الارتباط الذاتي متعدد المستويات
-    - تحليل طيفي متقدم
-    - نمذجة GARCH للتقلب
-    - تحليل Hurst Exponent
-    - كشف نقاط التحول
+    يكتشف الأنماط الحقيقية التي تسبق القفزات:
+    - بعد كم رقم صغير تأتي القفزة؟
+    - ما الأرقام التي تسبق القفزات مباشرة؟
+    - هل هناك قواعد "إذا ظهر X ثم Y بعد N جولة"؟
+    - ما التسلسلات المتكررة قبل القفزات؟
     """
 
     def __init__(self, data: list):
-        self.raw      = np.array(data, dtype=float)
-        self.log_raw  = np.log(np.maximum(self.raw, 1.0))
-        self.binary   = (self.raw >= 2.0).astype(int)
-        self.cats     = [categorize(v) for v in data]
-        self.n        = len(data)
-        self.returns  = np.diff(self.log_raw)
+        self.raw    = np.array(data, dtype=float)
+        self.n      = len(data)
+        self.data   = list(data)
 
-    # ── 1.1 تحليل توزيع Power Law ───────────────────────────
-    def analyze_distribution(self) -> dict:
+    # ─────────────────────────────────────────────────────────
+    # 1.1 قانون الفجوات — بعد كم رقم صغير تأتي القفزة؟
+    # ─────────────────────────────────────────────────────────
+    def discover_gap_laws(self) -> dict:
         """
-        يحلل كيف تتوزع القيم ويكتشف الانحراف
-        عن التوزيع النظري لـ Crash
+        يكتشف قوانين من نوع:
+        "بعد X رقم < 2 تأتي قفزة >= Y بنسبة Z%"
         """
-        arr = self.raw
-        n   = self.n
-
-        # المعاملات النظرية
-        house_edge = 0.99
-        thresholds = [1.5, 2.0, 3.0, 5.0, 10.0, 20.0]
-
-        empirical  = []
-        theoretical = []
-        for t in thresholds:
-            emp  = float(np.mean(arr >= t))
-            theo = float(min(house_edge / t, 1.0))
-            empirical.append(emp)
-            theoretical.append(theo)
-            
-        # اختبار Kolmogorov-Smirnov على log(data)
-        log_data = self.log_raw
-        mu_hat   = float(np.mean(log_data))
-        std_hat  = float(np.std(log_data))
-        
-        # قيم نظرية من التوزيع المتوقع
-        theoretical_samples = np.random.exponential(
-            scale=mu_hat, size=n
-        )
-        ks_stat, ks_p = ks_2samp(log_data, theoretical_samples)
-
-        # اكتشاف القيم الشاذة (Anomalies)
-        z_scores = np.abs(stats.zscore(log_data))
-        anomalies = np.where(z_scores > 3)[0]
-
-        # مقارنة عبر نوافذ زمنية
-        window_size = min(50, n // 4)
-        window_stats = []
-        for i in range(0, n - window_size, window_size // 2):
-            seg = arr[i:i+window_size]
-            window_stats.append({
-                'start'   : int(i),
-                'end'     : int(i + window_size),
-                'pct_high': round(float(np.mean(seg >= 2.0))*100, 1),
-                'mean'    : round(float(np.mean(seg)), 2),
-                'max'     : round(float(np.max(seg)), 2),
-                'median'  : round(float(np.median(seg)), 2)
-            })
-
-        return {
-            'empirical_probs'    : [round(e, 4) for e in empirical],
-            'theoretical_probs'  : [round(t, 4) for t in theoretical],
-            'thresholds'         : thresholds,
-            'deviations'         : [
-                round(float(e - t), 4)
-                for e, t in zip(empirical, theoretical)
-            ],
-            'ks_statistic'       : round(float(ks_stat), 4),
-            'ks_pvalue'          : round(float(ks_p), 4),
-            'anomaly_positions'  : anomalies.tolist(),
-            'n_anomalies'        : int(len(anomalies)),
-            'log_mean'           : round(mu_hat, 4),
-            'log_std'            : round(std_hat, 4),
-            'window_stats'       : window_stats,
-            'skewness'           : round(float(stats.skew(log_data)), 4),
-            'kurtosis'           : round(float(stats.kurtosis(log_data)), 4)
-        }
-
-    # ── 1.2 Hurst Exponent ──────────────────────────────────
-    def hurst_exponent(self) -> dict:
-        """
-        H > 0.5 = تتجه (trending) — الأنماط مستمرة
-        H = 0.5 = عشوائي تام
-        H < 0.5 = معكوس (mean-reverting)
-        """
-        ts   = self.log_raw
-        lags = range(2, min(20, self.n // 4))
-        tau  = []
-        lag_vals = []
-
-        for lag in lags:
-            if len(ts) > lag:
-                diffs = ts[lag:] - ts[:-lag]
-                tau.append(float(np.std(diffs)))
-                lag_vals.append(int(lag))
-
-        if len(tau) < 3:
-            return {'hurst': 0.5, 'interpretation': 'بيانات غير كافية'}
-
-        try:
-            log_lags = np.log(lag_vals)
-            log_tau  = np.log(np.array(tau) + 1e-9)
-            slope, intercept, r, p, se = stats.linregress(
-                log_lags, log_tau
-            )
-            H = float(slope)
-        except Exception:
-            H = 0.5
-
-        H = max(0.0, min(1.0, H))
-
-        if H > 0.6:
-            interp = f"📈 H={H:.3f} — تسلسل متجه (Trending): الأنماط تستمر"
-        elif H < 0.4:
-            interp = f"🔄 H={H:.3f} — انعكاس للمتوسط: بعد الارتفاع ينخفض"
-        else:
-            interp = f"🎲 H={H:.3f} — شبه عشوائي: صعب التنبؤ"
-
-        return {
-            'hurst'         : round(H, 4),
-            'interpretation': interp,
-            'lags'          : lag_vals,
-            'tau_values'    : [round(t, 4) for t in tau],
-            'r_squared'     : round(float(r**2), 4)
-        }
-
-    # ── 1.3 تحليل التقلب GARCH-like ────────────────────────
-    def volatility_analysis(self) -> dict:
-        """
-        يحلل كيف يتغير التقلب عبر الوقت
-        فترات هدوء تسبق قفزات كبيرة؟
-        """
-        returns  = self.returns
-        n        = len(returns)
-        window   = min(10, n // 5)
-
-        # تقلب متحرك
-        vol_series = []
-        for i in range(window, n):
-            seg = returns[i-window:i]
-            vol_series.append(float(np.std(seg)))
-
-        vol_arr = np.array(vol_series)
-
-        # اكتشاف فترات التقلب المنخفض
-        low_vol_threshold  = float(np.percentile(vol_arr, 25))
-        high_vol_threshold = float(np.percentile(vol_arr, 75))
-
-        low_vol_periods  = np.where(vol_arr < low_vol_threshold)[0]
-        high_vol_periods = np.where(vol_arr > high_vol_threshold)[0]
-
-        # هل يسبق التقلب المنخفض قفزات كبيرة؟
-        next_high_after_low_vol = 0
-        count_low_vol = 0
-        for idx in low_vol_periods:
-            actual_idx = idx + window
-            if actual_idx + 5 < self.n:
-                count_low_vol += 1
-                next_5 = self.raw[actual_idx:actual_idx+5]
-                if np.any(next_5 >= 3.0):
-                    next_high_after_low_vol += 1
-
-        prob_high_after_low_vol = (
-            float(next_high_after_low_vol / count_low_vol)
-            if count_low_vol > 0 else 0.5
-        )
-
-        # نمذجة ARCH: هل تتجمع التقلبات؟
-        sq_returns  = returns**2
-        arch_corr   = float(np.corrcoef(
-            sq_returns[1:], sq_returns[:-1]
-        )[0,1]) if len(sq_returns) > 1 else 0.0
-
-        return {
-            'vol_series'              : [round(v, 4) for v in vol_series],
-            'mean_vol'                : round(float(np.mean(vol_arr)), 4),
-            'current_vol'             : round(float(vol_arr[-1]), 4),
-            'low_vol_threshold'       : round(low_vol_threshold, 4),
-            'high_vol_threshold'      : round(high_vol_threshold, 4),
-            'prob_high_after_low_vol' : round(prob_high_after_low_vol, 4),
-            'arch_correlation'        : round(arch_corr, 4),
-            'volatility_clustering'   : bool(arch_corr > 0.15),
-            'current_regime'          : (
-                'هادئ 🟢' if vol_arr[-1] < low_vol_threshold
-                else 'متقلب 🔴' if vol_arr[-1] > high_vol_threshold
-                else 'طبيعي 🟡'
-            )
-        }
-
-    # ── 1.4 تحليل طيفي متقدم ────────────────────────────────
-    def advanced_spectral(self) -> dict:
-        """
-        تحليل Welch PSD لاكتشاف الدوريات الحقيقية
-        """
-        log_data = self.log_raw
-        n        = self.n
-
-        # Welch Power Spectral Density
-        try:
-            nperseg = min(64, n // 4)
-            freqs, psd = welch(
-                log_data - log_data.mean(),
-                nperseg=nperseg
-            )
-        except Exception:
-            freqs = np.array([0.0])
-            psd   = np.array([0.0])
-
-        # اكتشاف القمم في PSD
-        if len(psd) > 3:
-            peaks, props = find_peaks(
-                psd,
-                height=psd.mean() * 1.5,
-                distance=2
-            )
-        else:
-            peaks = np.array([])
-
-        detected_cycles = []
-        for pk in peaks:
-            if float(freqs[pk]) > 0:
-                period = float(1.0 / freqs[pk])
-                if period <= n / 2:
-                    detected_cycles.append({
-                        'period_rounds': round(period, 1),
-                        'power'        : round(float(psd[pk]), 6),
-                        'relative_power': round(
-                            float(psd[pk]) / (psd.max() + 1e-9), 4
-                        )
-                    })
-
-        detected_cycles.sort(
-            key=lambda x: x['power'], reverse=True
-        )
-
-        # FFT الكلاسيكي
-        fft_vals = np.abs(fft(log_data - log_data.mean()))
-        half     = n // 2
-        fft_h    = fft_vals[:half]
-        freq_h   = fftfreq(n)[:half]
-        dom_ratio= float(fft_h.max() / (fft_h.mean() + 1e-9))
-
-        # اكتشاف الأنماط الدورية في الثنائي
-        bin_fft  = np.abs(fft(self.binary - self.binary.mean()))
-        bin_fft_h= bin_fft[:half]
-        bin_peaks, _ = find_peaks(
-            bin_fft_h,
-            height=bin_fft_h.mean() * 2
-        )
-        binary_cycles = []
-        for pk in bin_peaks[:5]:
-            if float(freq_h[pk]) > 0:
-                period = float(1.0 / freq_h[pk])
-                binary_cycles.append({
-                    'period_rounds': round(period, 1),
-                    'power'        : round(float(bin_fft_h[pk]), 4)
-                })
-
-        return {
-            'welch_cycles'  : detected_cycles[:8],
-            'binary_cycles' : binary_cycles,
-            'dominance_ratio': round(dom_ratio, 2),
-            'has_pattern'   : bool(dom_ratio > 8),
-            'freqs'         : freqs.tolist(),
-            'psd'           : psd.tolist(),
-            'n_peaks'       : int(len(peaks))
-        }
-
-    # ── 1.5 كشف نقاط التحول ────────────────────────────────
-    def detect_changepoints(self) -> dict:
-        """
-        يكتشف متى تتغير خصائص التسلسل
-        (فترات ساخنة vs فترات باردة)
-        """
-        arr      = self.raw
-        n        = self.n
-        window   = min(20, n // 5)
-        step     = max(1, window // 4)
-
-        means    = []
-        stds     = []
-        pct_high = []
-        positions= []
-
-        for i in range(0, n - window, step):
-            seg = arr[i:i+window]
-            means.append(float(np.mean(seg)))
-            stds.append(float(np.std(seg)))
-            pct_high.append(float(np.mean(seg >= 2.0)))
-            positions.append(int(i + window // 2))
-
-        # اكتشاف التغيرات المفاجئة
-        means_arr = np.array(means)
-        pct_arr   = np.array(pct_high)
-
-        changepoints = []
-        for i in range(1, len(means_arr) - 1):
-            delta = abs(pct_arr[i] - pct_arr[i-1])
-            if delta > 0.20:
-                direction = (
-                    '🔥 تحول ساخن' if pct_arr[i] > pct_arr[i-1]
-                    else '❄️ تحول بارد'
-                )
-                changepoints.append({
-                    'position'   : int(positions[i]),
-                    'before_pct' : round(float(pct_arr[i-1])*100, 1),
-                    'after_pct'  : round(float(pct_arr[i])*100, 1),
-                    'delta'      : round(float(delta)*100, 1),
-                    'direction'  : direction
-                })
-
-        # الحالة الراهنة
-        recent_pct  = float(np.mean(arr[-20:] >= 2.0))
-        hist_pct    = float(np.mean(arr >= 2.0))
-        current_state = (
-            '🔥 ساخن' if recent_pct > hist_pct * 1.15
-            else '❄️ بارد' if recent_pct < hist_pct * 0.85
-            else '⚖️ طبيعي'
-        )
-
-        return {
-            'positions'    : positions,
-            'means'        : [round(m, 2) for m in means],
-            'pct_high'     : [round(p*100, 1) for p in pct_high],
-            'changepoints' : changepoints,
-            'current_state': current_state,
-            'recent_pct'   : round(recent_pct*100, 1),
-            'hist_pct'     : round(hist_pct*100, 1)
-        }
-
-    # ── 1.6 تحليل الفجوات بين القفزات ──────────────────────
-    def gap_analysis(self) -> dict:
-        """
-        الأهم: بعد كم جولة تأتي القفزة؟
-        يحسب توزيع الفجوات ويتنبأ بالقادمة
-        """
-        arr = self.raw
+        arr     = self.raw
         results = {}
 
-        for threshold in [2.0, 3.0, 5.0, 10.0, 20.0]:
-            positions = np.where(arr >= threshold)[0]
-
-            if len(positions) < 2:
+        for jump_thr in [2.0, 3.0, 5.0, 10.0]:
+            jump_positions = np.where(arr >= jump_thr)[0]
+            if len(jump_positions) < 3:
                 continue
 
-            gaps = np.diff(positions).tolist()
-            gaps = [int(g) for g in gaps]
-            last_pos = int(positions[-1])
-            current_gap = int(len(arr) - 1 - last_pos)
+            # احسب الفجوة (عدد الأرقام الصغيرة) قبل كل قفزة
+            gaps_before = []
+            for pos in jump_positions:
+                if pos == 0:
+                    continue
+                count = 0
+                i     = int(pos) - 1
+                while i >= 0 and arr[i] < jump_thr:
+                    count += 1
+                    i     -= 1
+                gaps_before.append(int(count))
+
+            if not gaps_before:
+                continue
+
+            gaps_arr = np.array(gaps_before)
+
+            # إحصاءات الفجوات
+            mean_g   = float(np.mean(gaps_arr))
+            median_g = float(np.median(gaps_arr))
+            std_g    = float(np.std(gaps_arr))
+            p25      = float(np.percentile(gaps_arr, 25))
+            p75      = float(np.percentile(gaps_arr, 75))
 
             # توزيع الفجوات
-            gap_arr = np.array(gaps)
-            mean_g  = float(np.mean(gap_arr))
-            std_g   = float(np.std(gap_arr))
-            median_g= float(np.median(gap_arr))
-            p25     = float(np.percentile(gap_arr, 25))
-            p75     = float(np.percentile(gap_arr, 75))
+            gap_dist = Counter(gaps_before)
+            most_common_gap = gap_dist.most_common(1)[0]
 
-            # احتمال الظهور بعد k جولة من الآن
-            # بافتراض توزيع هندسي للفجوات
-            prob_appearances = {}
-            prob_rate = min(float(len(positions) / len(arr)), 0.99)
-            for k in range(1, 16):
-                prob = float(
-                    prob_rate * (1 - prob_rate)**(k-1)
+            # قانون النطاق الأكثر احتمالاً
+            # P(قفزة | الفجوة الحالية = k)
+            gap_probs = {}
+            for k in range(0, int(p75) + 5):
+                count_k     = sum(1 for g in gaps_before if g == k)
+                total_occ_k = sum(
+                    1 for i in range(len(arr))
+                    if self._count_consecutive_low(arr, i, jump_thr) == k
                 )
-                prob_appearances[f'بعد {k} جولة'] = round(prob, 4)
+                if total_occ_k >= 2:
+                    gap_probs[k] = round(
+                        min(float(count_k / total_occ_k), 1.0), 4
+                    )
 
-            # نسبة الاستحقاق
-            due_ratio = float(current_gap / (mean_g + 1e-9))
-
-            # هل نحن في منطقة الخطر؟
-            if current_gap >= p75:
-                zone = '🔴 منطقة الخطر — متأخر!'
-            elif current_gap >= median_g:
-                zone = '🟡 منطقة التوقع — قريب'
-            else:
-                zone = '🟢 منطقة الأمان — مبكر'
-
-            # توقع الجولات المتبقية
-            expected_remaining = max(0, mean_g - current_gap)
-
-            results[f'>= {threshold}x'] = {
-                'count'              : int(len(positions)),
-                'gaps'               : gaps[-15:],
-                'mean_gap'           : round(mean_g, 1),
-                'std_gap'            : round(std_g, 1),
-                'median_gap'         : round(median_g, 1),
-                'p25_gap'            : round(p25, 1),
-                'p75_gap'            : round(p75, 1),
-                'current_gap'        : current_gap,
-                'due_ratio'          : round(due_ratio, 2),
-                'zone'               : zone,
-                'expected_remaining' : round(expected_remaining, 1),
-                'prob_in_next_5'     : round(float(
-                    1 - (1-prob_rate)**5
-                ), 4),
-                'prob_appearances'   : prob_appearances
+            results[f'>={jump_thr}x'] = {
+                'n_jumps'        : int(len(jump_positions)),
+                'mean_gap'       : round(mean_g, 1),
+                'median_gap'     : round(median_g, 1),
+                'std_gap'        : round(std_g, 1),
+                'p25_gap'        : round(p25, 1),
+                'p75_gap'        : round(p75, 1),
+                'most_common_gap': {
+                    'gap'  : int(most_common_gap[0]),
+                    'count': int(most_common_gap[1])
+                },
+                'gap_distribution': {
+                    str(k): int(v)
+                    for k, v in sorted(gap_dist.items())
+                },
+                'conditional_probs': gap_probs,
+                'gaps_before_jumps': gaps_before[:30]
             }
 
         return results
 
-    # ── 1.7 نمذجة سلسلة ماركوف عالية الدقة ────────────────
-    def advanced_markov(self) -> dict:
+    def _count_consecutive_low(self, arr, pos, thr):
+        """عد الأرقام الصغيرة المتتالية حتى pos"""
+        count = 0
+        i     = int(pos) - 1
+        while i >= 0 and arr[i] < thr:
+            count += 1
+            i     -= 1
+        return count
+
+    # ─────────────────────────────────────────────────────────
+    # 1.2 اكتشاف المُحفِّزات — ما الذي يسبق القفزات؟
+    # ─────────────────────────────────────────────────────────
+    def discover_triggers(self) -> dict:
         """
-        سلاسل ماركوف من درجة 1، 2، 3، 4
-        مع حساب احتمالات الثبات (Stationary Distribution)
+        يكتشف قوانين من نوع:
+        "إذا ظهر رقم >= X فبعد Y جولة تأتي قفزة >= Z بنسبة W%"
+        مثل: "إذا ظهر 5x فبعد 7 جولات تأتي قفزة >= 3x بنسبة 65%"
         """
-        cats = self.cats
+        arr     = self.raw
+        n       = self.n
+        results = []
 
-        # درجة 1
-        trans1 = defaultdict(Counter)
-        for i in range(len(cats)-1):
-            trans1[cats[i]][cats[i+1]] += 1
+        trigger_thrs = [1.5, 2.0, 3.0, 5.0, 10.0]
+        target_thrs  = [2.0, 3.0, 5.0, 10.0]
+        delays       = list(range(1, 16))
 
-        matrix1 = {}
-        for c in CAT_ORDER:
-            total = sum(trans1[c].values())
-            if total > 0:
-                matrix1[c] = {
-                    cc: round(trans1[c].get(cc,0)/total, 4)
-                    for cc in CAT_ORDER
-                }
-            else:
-                matrix1[c] = {cc: 0.0 for cc in CAT_ORDER}
-
-        # التوزيع الثابت (Stationary)
-        try:
-            M = np.array([[matrix1[r][c] for c in CAT_ORDER]
-                          for r in CAT_ORDER])
-            eigvals, eigvecs = np.linalg.eig(M.T)
-            idx = np.argmin(np.abs(eigvals - 1.0))
-            pi  = np.real(eigvecs[:, idx])
-            pi  = np.abs(pi) / np.abs(pi).sum()
-            stationary = {
-                CAT_ORDER[i]: round(float(pi[i]), 4)
-                for i in range(len(CAT_ORDER))
-            }
-        except Exception:
-            stationary = {c: round(1/6, 4) for c in CAT_ORDER}
-
-        # درجة 2
-        trans2 = defaultdict(Counter)
-        for i in range(len(cats)-2):
-            key = (cats[i], cats[i+1])
-            trans2[key][cats[i+2]] += 1
-
-        # درجة 3
-        trans3 = defaultdict(Counter)
-        for i in range(len(cats)-3):
-            key = (cats[i], cats[i+1], cats[i+2])
-            trans3[key][cats[i+3]] += 1
-
-        # درجة 4
-        trans4 = defaultdict(Counter)
-        for i in range(len(cats)-4):
-            key = (cats[i],cats[i+1],cats[i+2],cats[i+3])
-            trans4[key][cats[i+4]] += 1
-
-        def top_patterns(trans, min_occ=3, min_prob=0.55):
-            patterns = []
-            for key, counts in trans.items():
-                total = sum(counts.values())
-                if total < min_occ:
+        for trig_thr in trigger_thrs:
+            for tgt_thr in target_thrs:
+                if trig_thr >= tgt_thr:
                     continue
-                for next_cat, cnt in counts.items():
-                    prob = cnt / total
-                    if prob >= min_prob:
-                        if isinstance(key, tuple):
-                            pat_str = ' → '.join(
-                                CAT_LABELS[k] for k in key
-                            )
-                        else:
-                            pat_str = CAT_LABELS[key]
+                for delay in delays:
+                    # إيجاد مواضع المحفز
+                    trigger_pos = np.where(arr >= trig_thr)[0]
+                    hits        = 0
+                    total       = 0
+
+                    for pos in trigger_pos:
+                        target_pos = int(pos) + delay
+                        if target_pos < n:
+                            total += 1
+                            if arr[target_pos] >= tgt_thr:
+                                hits += 1
+
+                    if total >= 5:
+                        prob = float(hits / total)
+                        # الاحتمال الأساسي
+                        base = float(np.mean(arr >= tgt_thr))
+                        lift = prob - base
+
+                        if prob >= 0.55 and lift > 0.05:
+                            results.append({
+                                'trigger'     : f">={trig_thr}x",
+                                'delay'       : int(delay),
+                                'target'      : f">={tgt_thr}x",
+                                'probability' : round(prob, 4),
+                                'base_rate'   : round(base, 4),
+                                'lift'        : round(lift, 4),
+                                'hits'        : int(hits),
+                                'total'       : int(total),
+                                'rule'        : (
+                                    f"بعد {trig_thr}x ⟹ "
+                                    f"بعد {delay} جولة ⟹ "
+                                    f"{tgt_thr}x "
+                                    f"({prob*100:.1f}%)"
+                                )
+                            })
+
+        # ترتيب بالأهمية
+        results.sort(
+            key=lambda x: (x['lift'], x['probability']),
+            reverse=True
+        )
+        return {'rules': results[:20]}
+
+    # ─────────────────────────────────────────────────────────
+    # 1.3 اكتشاف التسلسلات قبل القفزات
+    # ─────────────────────────────────────────────────────────
+    def discover_pre_jump_sequences(self) -> dict:
+        """
+        يكتشف التسلسلات المتكررة قبل القفزات
+        مثل: "L L L H" أو "M L L" تسبق قفزة >= 5x
+        """
+        arr        = self.raw
+        n          = self.n
+        window     = 4  # نافذة التسلسل
+        results    = {}
+
+        def encode(v):
+            if v < 1.5:  return 'VL'
+            if v < 2.0:  return 'L'
+            if v < 3.0:  return 'M'
+            if v < 5.0:  return 'H'
+            if v < 10.0: return 'VH'
+            return 'EX'
+
+        labels = {
+            'VL':'<1.5','L':'1.5-2','M':'2-3',
+            'H':'3-5','VH':'5-10','EX':'>10'
+        }
+
+        for jump_thr in [3.0, 5.0, 10.0]:
+            jump_pos = np.where(arr >= jump_thr)[0]
+            if len(jump_pos) < 3:
+                continue
+
+            # جمع التسلسلات قبل كل قفزة
+            seq_counter    = Counter()
+            all_seq_counter= Counter()
+
+            for pos in jump_pos:
+                start = int(pos) - window
+                if start < 0:
+                    continue
+                seq = tuple(
+                    encode(arr[i])
+                    for i in range(start, int(pos))
+                )
+                seq_counter[seq] += 1
+
+            # جمع كل التسلسلات في البيانات
+            for i in range(n - window):
+                seq = tuple(
+                    encode(arr[i + j])
+                    for j in range(window)
+                )
+                all_seq_counter[seq] += 1
+
+            # احتمال كل تسلسل أن يسبق قفزة
+            patterns = []
+            for seq, count_before_jump in seq_counter.most_common(15):
+                total_occ = all_seq_counter.get(seq, 0)
+                if total_occ >= 3:
+                    prob = float(count_before_jump / total_occ)
+                    base = float(len(jump_pos) / max(n - window, 1))
+                    lift = prob - base
+                    if prob >= 0.40:
+                        seq_label = ' → '.join(
+                            labels.get(s, s) for s in seq
+                        )
                         patterns.append({
-                            'pattern'    : pat_str,
-                            'next'       : CAT_LABELS[next_cat],
-                            'next_cat'   : next_cat,
-                            'probability': round(float(prob), 4),
-                            'occurrences': int(total)
+                            'sequence'     : seq_label,
+                            'probability'  : round(prob, 4),
+                            'base_rate'    : round(base, 4),
+                            'lift'         : round(lift, 4),
+                            'seen_before_jump': int(count_before_jump),
+                            'total_seen'   : int(total_occ)
                         })
-            return sorted(
-                patterns,
-                key=lambda x: (x['probability'], x['occurrences']),
-                reverse=True
-            )[:10]
+
+            patterns.sort(
+                key=lambda x: x['probability'], reverse=True
+            )
+            results[f'>={jump_thr}x'] = patterns[:10]
+
+        return results
+
+    # ─────────────────────────────────────────────────────────
+    # 1.4 قانون التراكم — بعد كم قفزة تأتي القفزة الكبيرة؟
+    # ─────────────────────────────────────────────────────────
+    def discover_accumulation_law(self) -> dict:
+        """
+        يكتشف:
+        - كم جولة بين قفزتين متتاليتين في المتوسط؟
+        - هل توجد دورة منتظمة؟
+        - بعد قفزة كبيرة كم جولة حتى التالية؟
+        """
+        arr     = self.raw
+        results = {}
+
+        for thr in [2.0, 3.0, 5.0, 10.0, 20.0]:
+            positions = np.where(arr >= thr)[0]
+            if len(positions) < 3:
+                continue
+
+            gaps = np.diff(positions).tolist()
+            gaps = [int(g) for g in gaps]
+
+            # إحصاءات
+            g_arr  = np.array(gaps)
+            mean_g = float(np.mean(g_arr))
+            std_g  = float(np.std(g_arr))
+            med_g  = float(np.median(g_arr))
+
+            # هل الفجوات منتظمة؟
+            cv = std_g / (mean_g + 1e-9)  # معامل التباين
+
+            # آخر فجوة حالية
+            last_pos     = int(positions[-1])
+            current_gap  = int(len(arr) - 1 - last_pos)
+            due_ratio    = float(current_gap / (mean_g + 1e-9))
+
+            # توقع متى تأتي التالية
+            expected_next = max(0.0, mean_g - current_gap)
+
+            # هل الفجوة الحالية كبيرة جداً؟
+            z_score = float(
+                (current_gap - mean_g) / (std_g + 1e-9)
+            )
+
+            # تحليل الأنماط في الفجوات
+            # هل الفجوات الكبيرة تتبعها فجوات صغيرة؟
+            long_short = []
+            for i in range(len(gaps) - 1):
+                long_short.append((gaps[i], gaps[i+1]))
+
+            corr_gaps = 0.0
+            if len(gaps) > 2:
+                corr_gaps = float(np.corrcoef(
+                    gaps[:-1], gaps[1:]
+                )[0, 1])
+
+            results[f'>={thr}x'] = {
+                'count'          : int(len(positions)),
+                'mean_gap'       : round(mean_g, 1),
+                'std_gap'        : round(std_g, 1),
+                'median_gap'     : round(med_g, 1),
+                'cv'             : round(cv, 3),
+                'is_regular'     : bool(cv < 0.5),
+                'current_gap'    : int(current_gap),
+                'due_ratio'      : round(due_ratio, 2),
+                'z_score'        : round(z_score, 2),
+                'expected_next_in': round(expected_next, 1),
+                'gap_autocorr'   : round(corr_gaps, 3),
+                'last_gaps'      : gaps[-10:],
+                'zone'           : (
+                    '🔴 متأخر جداً!' if z_score > 1.5
+                    else '🟠 متأخر'   if z_score > 0.5
+                    else '🟡 في الوقت'if z_score > -0.5
+                    else '🟢 مبكر'
+                )
+            }
+
+        return results
+
+    # ─────────────────────────────────────────────────────────
+    # 1.5 قانون ما بعد القفزة — ماذا يأتي بعدها؟
+    # ─────────────────────────────────────────────────────────
+    def discover_post_jump_law(self) -> dict:
+        """
+        بعد قفزة >= X ماذا يأتي في الجولات 1,2,3,...,10؟
+        """
+        arr     = self.raw
+        n       = self.n
+        results = {}
+
+        for jump_thr in [2.0, 3.0, 5.0, 10.0]:
+            jump_pos = np.where(arr >= jump_thr)[0]
+            if len(jump_pos) < 3:
+                continue
+
+            # ماذا يأتي بعد k جولة؟
+            post_stats = {}
+            for k in range(1, 11):
+                values_after = []
+                for pos in jump_pos:
+                    next_pos = int(pos) + k
+                    if next_pos < n:
+                        values_after.append(float(arr[next_pos]))
+
+                if values_after:
+                    va = np.array(values_after)
+                    post_stats[k] = {
+                        'mean'      : round(float(np.mean(va)), 2),
+                        'median'    : round(float(np.median(va)), 2),
+                        'pct_high'  : round(float(np.mean(va>=2.0))*100, 1),
+                        'pct_low'   : round(float(np.mean(va<2.0))*100, 1),
+                        'pct_very_low': round(float(np.mean(va<1.5))*100,1)
+                    }
+
+            # عدد الأرقام الصغيرة المتتالية بعد القفزة
+            cooling_counts = []
+            for pos in jump_pos:
+                count = 0
+                i     = int(pos) + 1
+                while i < n and arr[i] < jump_thr:
+                    count += 1
+                    i     += 1
+                cooling_counts.append(int(count))
+
+            cc_arr = np.array(cooling_counts)
+            results[f'>={jump_thr}x'] = {
+                'post_round_stats'  : post_stats,
+                'cooling_mean'      : round(float(np.mean(cc_arr)), 1),
+                'cooling_median'    : round(float(np.median(cc_arr)), 1),
+                'cooling_std'       : round(float(np.std(cc_arr)), 1),
+                'cooling_counts'    : cooling_counts[:20]
+            }
+
+        return results
+
+    # ─────────────────────────────────────────────────────────
+    # 1.6 اكتشاف قواعد "إذا-ثم" المعقدة
+    # ─────────────────────────────────────────────────────────
+    def discover_if_then_rules(self) -> dict:
+        """
+        قواعد مركبة من نوع:
+        "إذا ظهر X ثم Y ثم Z → بعد N جولة تأتي قفزة"
+        """
+        arr    = self.raw
+        n      = self.n
+        rules  = []
+
+        def bucket(v):
+            if v < 1.5:  return 'tiny'
+            if v < 2.0:  return 'small'
+            if v < 3.0:  return 'med'
+            if v < 5.0:  return 'big'
+            return 'huge'
+
+        label = {
+            'tiny':'<1.5','small':'1.5-2',
+            'med':'2-3','big':'3-5','huge':'>5'
+        }
+
+        # أنماط ثلاثية → قفزة بعد k
+        for k in range(1, 8):
+            pattern_counts = defaultdict(int)
+            pattern_hits   = defaultdict(int)
+
+            for i in range(n - 3 - k):
+                pat = (
+                    bucket(arr[i]),
+                    bucket(arr[i+1]),
+                    bucket(arr[i+2])
+                )
+                pattern_counts[pat] += 1
+                if arr[i + 3 + k - 1] >= 3.0:
+                    pattern_hits[pat] += 1
+
+            base = float(np.mean(arr >= 3.0))
+
+            for pat, total in pattern_counts.items():
+                if total < 4:
+                    continue
+                hits = pattern_hits.get(pat, 0)
+                prob = float(hits / total)
+                lift = prob - base
+
+                if prob >= 0.55 and lift > 0.08:
+                    pat_str = (
+                        f"{label[pat[0]]} → "
+                        f"{label[pat[1]]} → "
+                        f"{label[pat[2]]}"
+                    )
+                    rules.append({
+                        'pattern'    : pat_str,
+                        'delay'      : int(k),
+                        'probability': round(prob, 4),
+                        'lift'       : round(lift, 4),
+                        'hits'       : int(hits),
+                        'total'      : int(total),
+                        'rule_text'  : (
+                            f"إذا رأيت [{pat_str}] "
+                            f"→ توقع قفزة >= 3x "
+                            f"بعد {k} جولة "
+                            f"({prob*100:.1f}%)"
+                        )
+                    })
+
+        rules.sort(
+            key=lambda x: (x['lift'], x['probability']),
+            reverse=True
+        )
+        return {'if_then_rules': rules[:15]}
+
+    # ─────────────────────────────────────────────────────────
+    # 1.7 تحليل Hurst وطبيعة التسلسل
+    # ─────────────────────────────────────────────────────────
+    def hurst_analysis(self) -> dict:
+        ts   = np.log(np.maximum(self.raw, 1.0))
+        lags = list(range(2, min(20, self.n // 4)))
+        tau  = []
+
+        for lag in lags:
+            d = ts[lag:] - ts[:-lag]
+            tau.append(float(np.std(d)))
+
+        if len(tau) < 3:
+            return {'H': 0.5, 'interpretation': 'بيانات غير كافية'}
+
+        slope, intercept, r2 = safe_linregress(
+            np.log(lags), np.log(np.array(tau) + 1e-9)
+        )
+        H = max(0.0, min(1.0, float(slope)))
 
         return {
-            'matrix1'    : matrix1,
-            'stationary' : stationary,
-            'order1'     : top_patterns(trans1, 5, 0.50),
-            'order2'     : top_patterns(trans2, 3, 0.55),
-            'order3'     : top_patterns(trans3, 3, 0.60),
-            'order4'     : top_patterns(trans4, 2, 0.65)
+            'H'             : round(H, 4),
+            'r_squared'     : round(r2, 4),
+            'lags'          : lags,
+            'tau'           : [round(t, 4) for t in tau],
+            'log_lags'      : np.log(lags).tolist(),
+            'log_tau'       : np.log(
+                np.array(tau) + 1e-9
+            ).tolist(),
+            'trend_y'       : (
+                np.array(np.log(lags)) * slope + intercept
+            ).tolist(),
+            'interpretation': (
+                f"📈 H={H:.3f} متجه — الأنماط تستمر"
+                if H > 0.6
+                else f"🔄 H={H:.3f} معكوس — يرتد للمتوسط"
+                if H < 0.4
+                else f"🎲 H={H:.3f} شبه عشوائي"
+            )
+        }
+
+    # ─────────────────────────────────────────────────────────
+    # 1.8 التحليل الطيفي
+    # ─────────────────────────────────────────────────────────
+    def spectral_analysis(self) -> dict:
+        log_data = np.log(np.maximum(self.raw, 1.0))
+        n        = self.n
+
+        try:
+            nperseg = min(64, n // 4)
+            freqs, psd = welch(
+                log_data - log_data.mean(), nperseg=nperseg
+            )
+            psd   = psd.tolist()
+            freqs = freqs.tolist()
+        except Exception:
+            freqs = []
+            psd   = []
+
+        # FFT
+        fft_vals = np.abs(fft(log_data - log_data.mean()))
+        half     = n // 2
+        fft_h    = fft_vals[:half]
+        freq_h   = fftfreq(n)[:half]
+
+        top_idx  = np.argsort(fft_h)[-8:][::-1]
+        cycles   = []
+        for idx in top_idx:
+            f = float(freq_h[idx])
+            if f > 0:
+                period = float(1.0 / f)
+                if 2 <= period <= n // 2:
+                    cycles.append({
+                        'period' : round(period, 1),
+                        'power'  : round(float(fft_h[idx]), 4),
+                        'rel_pow': round(
+                            float(fft_h[idx]) /
+                            (fft_h.max() + 1e-9), 4
+                        )
+                    })
+
+        dom = float(fft_h.max() / (fft_h.mean() + 1e-9))
+        return {
+            'cycles'     : cycles[:6],
+            'dominance'  : round(dom, 2),
+            'has_cycle'  : bool(dom > 8),
+            'freqs'      : freqs,
+            'psd'        : psd
         }
 
     def run_all(self) -> dict:
         return {
-            'distribution'  : self.analyze_distribution(),
-            'hurst'         : self.hurst_exponent(),
-            'volatility'    : self.volatility_analysis(),
-            'spectral'      : self.advanced_spectral(),
-            'changepoints'  : self.detect_changepoints(),
-            'gaps'          : self.gap_analysis(),
-            'markov'        : self.advanced_markov()
+            'gap_laws'      : self.discover_gap_laws(),
+            'triggers'      : self.discover_triggers(),
+            'pre_jump_seqs' : self.discover_pre_jump_sequences(),
+            'accumulation'  : self.discover_accumulation_law(),
+            'post_jump'     : self.discover_post_jump_law(),
+            'if_then'       : self.discover_if_then_rules(),
+            'hurst'         : self.hurst_analysis(),
+            'spectral'      : self.spectral_analysis()
         }
 
 
 # ══════════════════════════════════════════════════════════════
-#         2. محرك التنبؤ المتقدم
+#         2. محرك التنبؤ الذكي
 # ══════════════════════════════════════════════════════════════
-class AdvancedPredictor:
-    """
-    يدمج 8 طرق تنبؤ بأوزان ديناميكية
-    """
+class SmartPredictor:
 
-    def __init__(self, data: list, analysis: dict):
+    def __init__(self, data: list, patterns: dict):
         self.raw      = np.array(data, dtype=float)
-        self.cats     = [categorize(v) for v in data]
-        self.bin      = [1 if v >= 2.0 else 0 for v in data]
-        self.analysis = analysis
+        self.data     = list(data)
         self.n        = len(data)
+        self.patterns = patterns
 
-    def _current_state(self) -> dict:
-        """الحالة الراهنة"""
-        low_streak  = 0
+    def _current_context(self) -> dict:
+        arr = self.raw
+
+        # تسلسل منخفض حالي
+        low_streak = 0
+        for v in reversed(arr):
+            if v < 2.0: low_streak += 1
+            else:        break
+
+        # تسلسل مرتفع حالي
         high_streak = 0
-        for v in reversed(self.bin):
-            if v == 0 and high_streak == 0:
-                low_streak += 1
-            elif v == 1 and low_streak == 0:
-                high_streak += 1
-            else:
-                break
+        for v in reversed(arr):
+            if v >= 2.0: high_streak += 1
+            else:         break
 
-        recent10 = self.raw[-10:]
-        recent20 = self.raw[-20:]
-        hist_avg = float(np.mean(self.raw))
-        cur_vol  = self.analysis['volatility']['current_vol']
-        low_vol  = self.analysis['volatility']['low_vol_threshold']
+        # آخر ظهور لكل عتبة
+        def last_seen(thr):
+            for i in range(len(arr)-1, -1, -1):
+                if arr[i] >= thr:
+                    return int(len(arr) - 1 - i)
+            return int(len(arr))
 
-        return {
-            'last1'      : self.cats[-1],
-            'last2'      : self.cats[-2] if self.n >= 2 else 'M',
-            'last3'      : self.cats[-3] if self.n >= 3 else 'M',
-            'last4'      : self.cats[-4] if self.n >= 4 else 'M',
-            'last_value' : float(self.raw[-1]),
-            'low_streak' : int(low_streak),
-            'high_streak': int(high_streak),
-            'recent_avg10': round(float(np.mean(recent10)), 2),
-            'recent_avg20': round(float(np.mean(recent20)), 2),
-            'hist_avg'   : round(hist_avg, 2),
-            'current_vol': float(cur_vol),
-            'is_low_vol' : bool(cur_vol < low_vol),
-            'position_in_cycle': int(self.n % 20)
-        }
-
-    def predict_markov4(self, state: dict) -> dict:
-        """توقع Markov درجة 4"""
-        markov   = self.analysis['markov']
-        patterns = markov.get('order4', [])
-        key_str  = (
-            f"{CAT_LABELS[state['last4']]} → "
-            f"{CAT_LABELS[state['last3']]} → "
-            f"{CAT_LABELS[state['last2']]} → "
-            f"{CAT_LABELS[state['last1']]}"
-        )
-        for p in patterns:
-            if p['pattern'] == key_str:
-                return {
-                    'category'  : p['next_cat'],
-                    'confidence': float(p['probability']),
-                    'found'     : True,
-                    'method'    : 'Markov-4'
-                }
-        # fallback درجة 3
-        patterns3 = markov.get('order3', [])
-        key3 = (
-            f"{CAT_LABELS[state['last3']]} → "
-            f"{CAT_LABELS[state['last2']]} → "
-            f"{CAT_LABELS[state['last1']]}"
-        )
-        for p in patterns3:
-            if p['pattern'] == key3:
-                return {
-                    'category'  : p['next_cat'],
-                    'confidence': float(p['probability']) * 0.9,
-                    'found'     : True,
-                    'method'    : 'Markov-3 (fallback)'
-                }
-        return {
-            'category'  : 'M',
-            'confidence': 0.35,
-            'found'     : False,
-            'method'    : 'Markov (no match)'
-        }
-
-    def predict_markov1(self, state: dict) -> dict:
-        """توقع Markov درجة 1"""
-        matrix = self.analysis['markov']['matrix1']
-        probs  = matrix.get(state['last1'], {})
-        if not probs:
-            return {'category':'M','confidence':0.33,'method':'Markov-1'}
-        best = max(probs, key=probs.get)
-        return {
-            'category'  : best,
-            'confidence': float(probs.get(best, 0.33)),
-            'all_probs' : probs,
-            'method'    : 'Markov-1'
-        }
-
-    def predict_gap_analysis(self, state: dict) -> dict:
-        """توقع بناءً على تحليل الفجوات"""
-        gaps = self.analysis['gaps']
-
-        best_signal = None
-        best_conf   = 0.0
-
-        for threshold_key, info in gaps.items():
-            due   = float(info['due_ratio'])
-            cur_g = int(info['current_gap'])
-            mean_g= float(info['mean_gap'])
-
-            if due >= 1.2:
-                threshold = float(
-                    threshold_key.replace('>=','').replace('x','').strip()
-                )
-                conf = min(float(due) * 0.4, 0.80)
-                if threshold <= 3.0 and conf > best_conf:
-                    best_conf   = conf
-                    best_signal = {
-                        'category'  : 'H',
-                        'confidence': round(conf, 3),
-                        'threshold' : threshold_key,
-                        'due_ratio' : round(due, 2),
-                        'zone'      : info['zone'],
-                        'method'    : 'Gap Due Analysis'
-                    }
-
-        if best_signal:
-            return best_signal
+        def encode(v):
+            if v < 1.5:  return 'tiny'
+            if v < 2.0:  return 'small'
+            if v < 3.0:  return 'med'
+            if v < 5.0:  return 'big'
+            return 'huge'
 
         return {
-            'category'  : 'M',
-            'confidence': 0.40,
-            'method'    : 'Gap Analysis (neutral)'
+            'low_streak'   : int(low_streak),
+            'high_streak'  : int(high_streak),
+            'last_value'   : float(arr[-1]),
+            'last_3'       : [float(v) for v in arr[-3:]],
+            'last_5'       : [float(v) for v in arr[-5:]],
+            'pattern_3'    : tuple(encode(v) for v in arr[-3:]),
+            'pattern_4'    : tuple(encode(v) for v in arr[-4:]),
+            'recent_avg10' : float(np.mean(arr[-10:])),
+            'hist_avg'     : float(np.mean(arr)),
+            'last_seen_2x' : last_seen(2.0),
+            'last_seen_3x' : last_seen(3.0),
+            'last_seen_5x' : last_seen(5.0),
+            'last_seen_10x': last_seen(10.0)
         }
 
-    def predict_hurst(self, state: dict) -> dict:
-        """توقع بناءً على Hurst"""
-        H = float(self.analysis['hurst']['hurst'])
-        last_cat = state['last1']
+    def _apply_gap_law(self, ctx: dict) -> dict:
+        """تطبيق قانون الفجوات"""
+        gap_laws = self.patterns['gap_laws']
+        signals  = []
 
-        if H > 0.6:
-            # متجه: نفس الاتجاه
-            high_cats = ['M','H','VH','EX']
-            cat = last_cat if last_cat in ['H','VH','EX'] else 'M'
-            conf = float(H)
-        elif H < 0.4:
-            # معكوس
-            reversal = {
-                'VL':'M','L':'M','M':'L','H':'L','VH':'L','EX':'L'
-            }
-            cat  = reversal.get(last_cat, 'M')
-            conf = float(1 - H)
-        else:
-            cat  = 'M'
-            conf = 0.40
+        for thr_key, info in gap_laws.items():
+            thr   = float(thr_key.replace('>=','').replace('x',''))
+            ls    = int(ctx['low_streak'])
+            cprob = info['conditional_probs'].get(ls, None)
 
-        return {
-            'category'  : cat,
-            'confidence': round(min(conf, 0.75), 3),
-            'hurst'     : round(H, 3),
-            'method'    : 'Hurst Exponent'
-        }
+            if cprob is not None and cprob >= 0.45:
+                mean_g = info['mean_gap']
+                ls_normalized = ls / (mean_g + 1e-9)
+                signals.append({
+                    'threshold'   : thr_key,
+                    'current_gap' : ls,
+                    'mean_gap'    : mean_g,
+                    'prob'        : cprob,
+                    'normalized'  : round(ls_normalized, 2)
+                })
 
-    def predict_volatility(self, state: dict) -> dict:
-        """توقع بناءً على نظام التقلب"""
-        vol_info = self.analysis['volatility']
-        regime   = vol_info['current_regime']
-        prob_h   = float(vol_info['prob_high_after_low_vol'])
-
-        if state['is_low_vol'] and prob_h > 0.55:
+        # أقوى إشارة
+        if signals:
+            best = max(signals, key=lambda x: x['prob'])
             return {
-                'category'  : 'H',
-                'confidence': round(prob_h, 3),
-                'regime'    : regime,
-                'method'    : 'Volatility Regime'
+                'signal'     : True,
+                'probability': best['prob'],
+                'details'    : best,
+                'all_signals': signals
             }
-        elif 'متقلب' in regime:
+        return {'signal': False, 'probability': 0.40}
+
+    def _apply_trigger_rules(self, ctx: dict) -> dict:
+        """تطبيق قواعد المحفزات"""
+        rules    = self.patterns['triggers']['rules']
+        arr      = self.raw
+        n        = self.n
+        matching = []
+
+        for rule in rules:
+            trig_thr = float(
+                rule['trigger'].replace('>=','').replace('x','')
+            )
+            delay    = int(rule['delay'])
+            # هل يوجد محفز قبل delay جولة؟
+            check_pos = n - delay
+            if check_pos >= 0 and arr[check_pos] >= trig_thr:
+                matching.append(rule)
+
+        if matching:
+            best = max(matching, key=lambda x: x['probability'])
             return {
-                'category'  : 'VL',
-                'confidence': 0.55,
-                'regime'    : regime,
-                'method'    : 'Volatility Regime'
+                'signal'      : True,
+                'probability' : float(best['probability']),
+                'lift'        : float(best['lift']),
+                'rule'        : best['rule'],
+                'n_matching'  : int(len(matching))
             }
-        return {
-            'category'  : 'M',
-            'confidence': 0.42,
-            'regime'    : regime,
-            'method'    : 'Volatility Regime'
+        return {'signal': False, 'probability': 0.38}
+
+    def _apply_if_then(self, ctx: dict) -> dict:
+        """تطبيق قواعد إذا-ثم"""
+        rules   = self.patterns['if_then']['if_then_rules']
+        arr     = self.raw
+
+        def bucket(v):
+            if v < 1.5:  return 'tiny'
+            if v < 2.0:  return 'small'
+            if v < 3.0:  return 'med'
+            if v < 5.0:  return 'big'
+            return 'huge'
+
+        label = {
+            'tiny':'<1.5','small':'1.5-2',
+            'med':'2-3','big':'3-5','huge':'>5'
         }
 
-    def predict_cycle_position(self) -> dict:
-        """توقع بناءً على موقع الدورة"""
-        cycles = self.analysis['spectral']['welch_cycles']
-        if not cycles:
-            return {'category':'M','confidence':0.38,'method':'Cycle'}
+        matching = []
+        if len(arr) >= 3:
+            cur_pattern = (
+                f"{label[bucket(arr[-3])]} → "
+                f"{label[bucket(arr[-2])]} → "
+                f"{label[bucket(arr[-1])]}"
+            )
+            for rule in rules:
+                if rule['pattern'] == cur_pattern and rule['delay'] == 1:
+                    matching.append(rule)
 
-        best   = cycles[0]
-        period = float(best['period_rounds'])
-        phase  = float((self.n % max(int(period), 1)) / max(period, 1))
+        if matching:
+            best = max(matching, key=lambda x: x['probability'])
+            return {
+                'signal'     : True,
+                'probability': float(best['probability']),
+                'rule_text'  : best['rule_text'],
+                'lift'       : float(best['lift'])
+            }
+        return {'signal': False, 'probability': 0.42}
 
-        if 0.1 <= phase <= 0.35:
-            cat, conf = 'H', 0.58
-        elif 0.35 < phase <= 0.65:
-            cat, conf = 'VH', 0.52
-        elif 0.65 < phase <= 0.85:
-            cat, conf = 'M', 0.50
-        else:
-            cat, conf = 'VL', 0.55
+    def _apply_accumulation(self, ctx: dict) -> dict:
+        """تطبيق قانون التراكم"""
+        acc     = self.patterns['accumulation']
+        signals = []
 
-        return {
-            'category'  : cat,
-            'confidence': conf,
-            'period'    : round(period, 1),
-            'phase'     : round(phase, 3),
-            'method'    : 'Spectral Cycle'
+        for thr_key, info in acc.items():
+            thr = float(
+                thr_key.replace('>=','').replace('x','')
+            )
+            if thr > 5.0:
+                continue
+
+            z      = float(info['z_score'])
+            due    = float(info['due_ratio'])
+            last_s = int(ctx.get(
+                f"last_seen_{int(thr)}x",
+                info['current_gap']
+            ))
+
+            if z > 1.0 or due >= 1.3:
+                prob = min(0.40 + z * 0.15 + due * 0.10, 0.82)
+                signals.append({
+                    'threshold': thr_key,
+                    'z_score'  : z,
+                    'due'      : due,
+                    'zone'     : info['zone'],
+                    'prob'     : round(prob, 3)
+                })
+
+        if signals:
+            best = max(signals, key=lambda x: x['prob'])
+            return {
+                'signal'     : True,
+                'probability': best['prob'],
+                'details'    : best
+            }
+        return {'signal': False, 'probability': 0.40}
+
+    def _apply_hurst(self, ctx: dict) -> dict:
+        """تطبيق Hurst"""
+        H      = float(self.patterns['hurst']['H'])
+        last_v = float(ctx['last_value'])
+
+        if H < 0.4:
+            # معكوس: بعد منخفض → ارتفاع
+            if last_v < 1.5:
+                return {
+                    'probability': 0.62,
+                    'logic'      : f"H={H:.3f} معكوس + آخر قيمة منخفضة"
+                }
+        elif H > 0.6:
+            # متجه
+            recent = float(np.mean(self.raw[-5:]))
+            if recent > float(np.mean(self.raw)):
+                return {
+                    'probability': 0.60,
+                    'logic'      : f"H={H:.3f} متجه + اتجاه صاعد"
+                }
+        return {'probability': 0.45}
+
+    def full_predict(self) -> dict:
+        """التنبؤ الكامل"""
+        ctx = self._current_context()
+
+        # تشغيل كل المحركات
+        gap_sig  = self._apply_gap_law(ctx)
+        trig_sig = self._apply_trigger_rules(ctx)
+        ifthen   = self._apply_if_then(ctx)
+        acc_sig  = self._apply_accumulation(ctx)
+        hurst_sig= self._apply_hurst(ctx)
+
+        # أوزان ديناميكية
+        weights = {
+            'gap'    : 0.30,
+            'trigger': 0.25,
+            'ifthen' : 0.20,
+            'acc'    : 0.15,
+            'hurst'  : 0.10
         }
 
-    def predict_mean_reversion(self, state: dict) -> dict:
-        """انتقال للمتوسط"""
-        r10  = float(state['recent_avg10'])
-        r20  = float(state['recent_avg20'])
-        hist = float(state['hist_avg'])
-        ratio= r10 / (hist + 1e-9)
-        trend= r10 - r20
-
-        if ratio < 0.70:
-            cat, conf = 'H', min(float(1.1 - ratio), 0.78)
-        elif ratio < 0.85:
-            cat, conf = 'M', 0.58
-        elif ratio > 1.40:
-            cat, conf = 'VL', min(float(ratio - 0.6), 0.72)
-        elif ratio > 1.20:
-            cat, conf = 'L', 0.55
-        else:
-            cat, conf = 'M', 0.42
-
-        # تعديل بناءً على الاتجاه
-        if trend < 0 and cat in ['H','VH']:
-            conf = min(conf + 0.05, 0.85)
-        elif trend > 0 and cat in ['VL','L']:
-            conf = min(conf + 0.05, 0.85)
-
-        return {
-            'category'  : cat,
-            'confidence': round(min(conf, 0.82), 3),
-            'ratio'     : round(float(ratio), 3),
-            'trend'     : round(float(trend), 3),
-            'method'    : 'Mean Reversion'
+        probs = {
+            'gap'    : float(gap_sig.get('probability', 0.40)),
+            'trigger': float(trig_sig.get('probability', 0.38)),
+            'ifthen' : float(ifthen.get('probability', 0.42)),
+            'acc'    : float(acc_sig.get('probability', 0.40)),
+            'hurst'  : float(hurst_sig.get('probability', 0.45))
         }
 
-    def predict_streak_bayesian(self, state: dict) -> dict:
-        """Bayesian بناءً على التسلسل المنخفض"""
-        low_s = int(state['low_streak'])
-        bin_  = self.bin
-        n     = len(bin_)
+        # تعزيز إذا وُجدت إشارات قوية
+        signals_active = sum([
+            bool(gap_sig.get('signal', False)),
+            bool(trig_sig.get('signal', False)),
+            bool(ifthen.get('signal', False)),
+            bool(acc_sig.get('signal', False))
+        ])
 
-        # حساب احتمال مشروط
-        transitions = 0
-        occurrences = 0
-        k = min(low_s, 6)
-
-        for i in range(n - k - 1):
-            if all(bin_[i:i+k] == np.zeros(k, dtype=int)):
-                occurrences += 1
-                if bin_[i+k] == 1:
-                    transitions += 1
-
-        if occurrences >= 3:
-            # Bayesian مع prior
-            alpha  = float(transitions) + 2.0
-            beta_  = float(occurrences - transitions) + 1.0
-            prob_h = float(alpha / (alpha + beta_))
-        else:
-            prob_h = float(np.mean(bin_))
-
-        if low_s >= 5:
-            prob_h = min(prob_h + 0.10, 0.88)
-
-        cat = 'M' if prob_h >= 0.55 else ('L' if prob_h >= 0.45 else 'VL')
-        if prob_h >= 0.65:
-            cat = 'H'
-
-        return {
-            'category'  : cat,
-            'confidence': round(prob_h if prob_h >= 0.5 else 1-prob_h, 3),
-            'prob_high' : round(prob_h, 4),
-            'low_streak': low_s,
-            'occurrences': int(occurrences),
-            'method'    : 'Bayesian Streak'
-        }
-
-    def ensemble_predict(self) -> dict:
-        """التنبؤ الجماعي النهائي"""
-        state = self._current_state()
-
-        # تشغيل كل الطرق
-        methods = {
-            'markov4'       : (self.predict_markov4(state),      0.22),
-            'markov1'       : (self.predict_markov1(state),      0.15),
-            'gap'           : (self.predict_gap_analysis(state), 0.20),
-            'hurst'         : (self.predict_hurst(state),        0.10),
-            'volatility'    : (self.predict_volatility(state),   0.12),
-            'cycle'         : (self.predict_cycle_position(),    0.08),
-            'mean_reversion': (self.predict_mean_reversion(state),0.08),
-            'streak_bayes'  : (self.predict_streak_bayesian(state),0.05)
-        }
-
-        # تجميع الأصوات
-        votes = defaultdict(float)
-        for name, (pred, weight) in methods.items():
-            cat  = pred['category']
-            conf = float(pred.get('confidence', 0.5))
-            votes[cat] += weight * conf
-
-        total  = sum(votes.values()) + 1e-9
-        winner = max(votes, key=votes.get)
-        final_conf = float(votes[winner]) / total
-
-        # احتمال >= 2x
-        high_cats = ['M','H','VH','EX']
+        # الاحتمال المرجح
         prob_high = sum(
-            float(votes[c]) for c in high_cats
-        ) / total
+            weights[k] * probs[k] for k in weights
+        )
+
+        # تعديل بعدد الإشارات النشطة
+        if signals_active >= 3:
+            prob_high = min(prob_high + 0.10, 0.88)
+        elif signals_active >= 2:
+            prob_high = min(prob_high + 0.05, 0.82)
 
         # تعديل بالتسلسل المنخفض
-        ls = int(state['low_streak'])
-        if ls >= 4:
-            boost     = min(0.08 * (ls - 3), 0.18)
-            prob_high = min(prob_high + boost, 0.90)
+        ls = int(ctx['low_streak'])
+        if ls >= 6:
+            prob_high = min(prob_high + 0.12, 0.88)
+        elif ls >= 4:
+            prob_high = min(prob_high + 0.06, 0.82)
 
-        # تعديل بـ Hurst
-        H = float(self.analysis['hurst']['hurst'])
-        if H < 0.4 and state['last1'] in ['H','VH','EX']:
-            prob_high = max(prob_high - 0.08, 0.10)
+        # تحليل ما بعد القفزة
+        post = self.patterns['post_jump']
+        post_signal = None
+        if '>= 5.0x' in post or '>=5.0x' in post:
+            key = '>= 5.0x' if '>= 5.0x' in post else '>=5.0x'
+            pj  = post[key]
+            ls5 = int(ctx['last_seen_5x'])
+            cool= float(pj.get('cooling_mean', 5.0))
+            if ls5 < cool:
+                prob_high = max(prob_high - 0.08, 0.15)
+                post_signal = (
+                    f"تبريد بعد قفزة 5x: {ls5}/{cool:.0f} جولة"
+                )
 
-        # الفئة النهائية
-        if prob_high >= 0.72:   final_cat = 'H'
-        elif prob_high >= 0.58: final_cat = 'M'
-        elif prob_high <= 0.28: final_cat = 'VL'
-        elif prob_high <= 0.42: final_cat = 'L'
-        else:                   final_cat = winner
+        prob_high = float(np.clip(prob_high, 0.05, 0.95))
 
-        # توقع عدد الجولات للقفزة القادمة
-        gaps_info    = self.analysis['gaps']
-        rounds_to_jump = {}
-        for thr, info in gaps_info.items():
-            rem = float(info['expected_remaining'])
-            rounds_to_jump[thr] = {
-                'expected_in'  : max(0.0, round(rem, 1)),
-                'zone'         : info['zone'],
-                'current_gap'  : info['current_gap'],
-                'mean_gap'     : info['mean_gap']
+        # توقع الجولات
+        acc = self.patterns['accumulation']
+        jump_forecast = {}
+        for thr_key, info in acc.items():
+            exp = float(info['expected_next_in'])
+            jump_forecast[thr_key] = {
+                'expected_in': max(0.0, round(exp, 1)),
+                'zone'       : info['zone'],
+                'z_score'    : info['z_score'],
+                'current_gap': info['current_gap']
             }
 
-        # النطاق القيمي
-        ranges = {
-            'VL':(1.0,1.5),'L':(1.5,2.0),'M':(2.0,3.0),
-            'H':(3.0,5.0),'VH':(5.0,10.0),'EX':(10.0,30.0)
-        }
-        lo, hi = ranges[final_cat]
+        # الحكم النهائي
+        if prob_high >= 0.70:
+            verdict = '🟢 ارتفاع قوي محتمل'
+            rec     = 'الظروف مواتية للقفزة'
+        elif prob_high >= 0.58:
+            verdict = '🟡 ارتفاع محتمل'
+            rec     = 'إشارات إيجابية متعددة'
+        elif prob_high <= 0.35:
+            verdict = '🔴 منخفض مرجح'
+            rec     = 'لا تزال في فترة تبريد'
+        else:
+            verdict = '⚪ غير محدد'
+            rec     = 'انتظر إشارات أوضح'
 
         return {
-            'final_cat'       : final_cat,
-            'final_label'     : CAT_LABELS[final_cat],
-            'value_range'     : f"{lo:.1f}x — {hi:.1f}x",
-            'est_value'       : round((lo+hi)/2, 2),
-            'prob_high'       : round(float(prob_high), 4),
-            'prob_high_pct'   : round(float(prob_high)*100, 1),
-            'final_conf'      : round(final_conf, 4),
-            'confidence_level': (
-                '🟢 عالية'   if final_conf >= 0.65 else
-                '🟡 متوسطة' if final_conf >= 0.50 else
-                '🔴 منخفضة'
-            ),
-            'low_streak'      : ls,
-            'current_state'   : state,
-            'method_votes'    : {
-                k: round(float(v)/total, 4)
-                for k, v in sorted(
-                    votes.items(),
-                    key=lambda x: x[1], reverse=True
-                )
+            'prob_high'      : round(prob_high, 4),
+            'prob_high_pct'  : round(prob_high * 100, 1),
+            'signals_active' : int(signals_active),
+            'verdict'        : verdict,
+            'recommendation' : rec,
+            'low_streak'     : int(ls),
+            'context'        : ctx,
+            'post_signal'    : post_signal,
+            'jump_forecast'  : jump_forecast,
+            'method_probs'   : {
+                k: round(v, 4) for k, v in probs.items()
             },
-            'methods_detail'  : {
-                k: v[0] for k, v in methods.items()
-            },
-            'rounds_to_jump'  : rounds_to_jump,
-            'hurst'           : H,
-            'volatility_regime': self.analysis['volatility']['current_regime']
+            'signals': {
+                'gap'    : gap_sig,
+                'trigger': trig_sig,
+                'ifthen' : ifthen,
+                'acc'    : acc_sig,
+                'hurst'  : hurst_sig
+            }
         }
 
 
 # ══════════════════════════════════════════════════════════════
-#                    بيانات نموذجية
+#                    البيانات النموذجية
 # ══════════════════════════════════════════════════════════════
 SAMPLE_DATA = [
     8.72,6.75,1.86,2.18,1.25,2.28,1.24,1.20,1.54,24.46,
@@ -997,18 +964,20 @@ SAMPLE_DATA = [
     3.78,1.12,1.52,22.81,1.31,1.90,1.38,1.47,2.86,1.79,
     1.49,1.38,1.84,1.06,3.30,5.97,1.00,2.92,1.64,5.32,
     3.26,1.78,2.24,3.16,1.60,1.08,1.55,1.07,1.02,1.23,
-    1.08,5.22,3.32,24.86,3.37,5.16,1.69,2.31,1.07,1.10,
+    5.22,3.32,24.86,3.37,5.16,1.69,2.31,1.07,1.10,1.01,
+    1.36,1.38,1.54,5.34,2.68,5.78,3.63,1.89,8.41,4.06,
+    1.44,1.50,3.17,1.02,1.80,1.90,1.86,1.85,1.73,3.86,
 ]
 
 
 # ══════════════════════════════════════════════════════════════
 #                    واجهة المستخدم
 # ══════════════════════════════════════════════════════════════
-st.title("🔬 محلل أنماط Crash المتقدم")
+st.title("🔬 محلل أنماط Crash الذكي")
 st.caption(
-    "Hurst Exponent • GARCH Volatility • Markov-4 • "
-    "Welch PSD • Gap Analysis • Bayesian Streak • "
-    "Ensemble Prediction"
+    "يكتشف: قوانين الفجوات • محفزات القفزات • "
+    "قواعد إذا-ثم • تسلسلات ما قبل القفزة • "
+    "Hurst • التنبؤ الجماعي"
 )
 
 # ── إدخال البيانات ──────────────────────────────────────────
@@ -1022,28 +991,31 @@ raw_data = None
 
 if method == "📝 يدوي":
     txt = st.text_area(
-        "قيم Crash (50+ للحصول على أفضل تحليل):",
-        height=120,
-        placeholder="1.23  4.56  2.10  8.92 ..."
+        "قيم Crash (50+ للأفضل):",
+        height=130,
+        placeholder="1.23  4.56  2.10  8.92  22.3 ..."
     )
     if txt.strip():
         try:
             raw_data = [
                 float(x) for x in
-                txt.replace('\n',' ').split() if x.strip()
+                txt.replace('\n',' ').split()
+                if x.strip()
             ]
             st.success(f"✅ {len(raw_data)} قيمة")
         except Exception:
             st.error("❌ أرقام فقط")
 
 elif method == "📂 CSV":
-    up = st.file_uploader("CSV — عمود crash_point", type=['csv'])
+    up = st.file_uploader("CSV — عمود crash_point",type=['csv'])
     if up:
         try:
             df_u = pd.read_csv(up)
             if 'crash_point' in df_u.columns:
-                raw_data = [float(x) for x in
-                            df_u['crash_point'].dropna()]
+                raw_data = [
+                    float(x) for x in
+                    df_u['crash_point'].dropna()
+                ]
                 st.success(f"✅ {len(raw_data)} قيمة")
             else:
                 st.error(f"الأعمدة: {list(df_u.columns)}")
@@ -1058,394 +1030,630 @@ if raw_data:
     n   = int(len(arr))
 
     c1,c2,c3,c4,c5,c6 = st.columns(6)
-    c1.metric("العدد",   str(n))
-    c2.metric("متوسط",   f"{arr.mean():.2f}x")
-    c3.metric("وسيط",    f"{np.median(arr):.2f}x")
-    c4.metric("أقصى",    f"{arr.max():.2f}x")
-    c5.metric(">=2x",    f"{np.mean(arr>=2)*100:.1f}%")
-    c6.metric("آخر قيمة",f"{arr[-1]:.2f}x")
+    c1.metric("العدد",    str(n))
+    c2.metric("متوسط",    f"{arr.mean():.2f}x")
+    c3.metric("وسيط",     f"{np.median(arr):.2f}x")
+    c4.metric("أقصى",     f"{arr.max():.2f}x")
+    c5.metric(">=2x",     f"{np.mean(arr>=2)*100:.1f}%")
+    c6.metric("آخر قيمة", f"{arr[-1]:.2f}x")
 
     if n < 50:
-        st.warning(f"⚠️ يُفضَّل 50+ قيمة (لديك {n})")
+        st.warning(f"⚠️ يُفضَّل 50+ (لديك {n})")
     else:
         st.markdown("---")
         if st.button(
-            "🚀 تحليل عميق + تنبؤ متقدم",
+            "🚀 تحليل الأنماط والتنبؤ",
             type="primary",
             use_container_width=True
         ):
             prog = st.progress(0)
             stat = st.empty()
 
-            stat.info("⏳ التحليل العميق...")
-            analyzer = DeepPatternAnalyzer(raw_data)
-            analysis = analyzer.run_all()
-            prog.progress(60)
+            stat.info("⏳ اكتشاف قوانين الفجوات...")
+            engine   = SmartPatternEngine(raw_data)
+            prog.progress(15)
 
-            stat.info("⏳ حساب التنبؤ الجماعي...")
-            predictor = AdvancedPredictor(raw_data, analysis)
-            pred      = predictor.ensemble_predict()
+            stat.info("⏳ اكتشاف المحفزات...")
+            patterns = engine.run_all()
+            prog.progress(70)
+
+            stat.info("⏳ حساب التنبؤ...")
+            predictor = SmartPredictor(raw_data, patterns)
+            pred      = predictor.full_predict()
             prog.progress(100)
 
-            stat.empty(); prog.empty()
+            stat.empty()
+            prog.empty()
             st.balloons()
 
             # ════════════════════════════════════════════
-            #            بطاقة التنبؤ الرئيسية
+            #           بطاقة التنبؤ
             # ════════════════════════════════════════════
             st.markdown("---")
             st.header("🎯 التنبؤ بالجولة القادمة")
 
-            cat   = pred['final_cat']
-            color = CAT_COLORS[cat]
-            ls    = pred['low_streak']
+            prob = pred['prob_high']
+            color = (
+                '#2ecc71' if prob >= 0.65
+                else '#f39c12' if prob >= 0.50
+                else '#e74c3c'
+            )
 
-            col_main, col_side = st.columns([1, 2])
+            col_a, col_b = st.columns([1,2])
 
-            with col_main:
+            with col_a:
                 st.markdown(
                     f"""
                     <div style="
-                        background:{color}18;
+                        background:{color}15;
                         border:3px solid {color};
-                        border-radius:20px;
-                        padding:30px;
+                        border-radius:18px;
+                        padding:28px;
                         text-align:center;
                     ">
-                    <div style="font-size:3em;">{
-                        '🔴' if cat=='VL' else
-                        '🟠' if cat=='L'  else
-                        '🟡' if cat=='M'  else
-                        '🟢' if cat=='H'  else
-                        '🔵' if cat=='VH' else '🟣'
-                    }</div>
-                    <h2 style="color:{color};margin:8px 0;">
-                        {pred['final_label']}
-                    </h2>
-                    <h3 style="margin:4px 0;">
-                        ≈ {pred['est_value']}x
+                    <h1 style="color:{color};margin:0;">
+                        {pred['prob_high_pct']}%
+                    </h1>
+                    <h3 style="margin:6px 0;">
+                        احتمال >= 2x
                     </h3>
-                    <p style="color:#888;margin:4px 0;">
-                        نطاق: {pred['value_range']}
-                    </p>
-                    <hr style="border-color:{color}44;">
-                    <b>احتمال >= 2x:</b>
-                    {pred['prob_high_pct']}%<br>
-                    <b>الثقة:</b> {pred['confidence_level']}
+                    <hr style="border-color:{color}55;">
+                    <b>{pred['verdict']}</b><br>
+                    <small>{pred['recommendation']}</small>
+                    <hr style="border-color:{color}33;">
+                    <small>إشارات نشطة: 
+                    {pred['signals_active']}/4</small><br>
+                    <small>تسلسل منخفض: 
+                    {pred['low_streak']} جولة</small>
                     </div>
                     """,
                     unsafe_allow_html=True
                 )
 
-                if ls >= 3:
-                    st.warning(
-                        f"⚡ تسلسل منخفض = {ls} جولات\n\n"
-                        f"احتمال ارتفاع متزايد!"
-                    )
+                if pred['post_signal']:
+                    st.warning(f"⚠️ {pred['post_signal']}")
 
-            with col_side:
-                # أصوات الطرق
-                votes_data = {
-                    CAT_LABELS.get(k, k): round(v*100, 1)
-                    for k, v in pred['method_votes'].items()
+            with col_b:
+                # مخطط الاحتمالات
+                method_labels = {
+                    'gap'    :'قانون الفجوات',
+                    'trigger':'المحفزات',
+                    'ifthen' :'قواعد إذا-ثم',
+                    'acc'    :'قانون التراكم',
+                    'hurst'  :'Hurst'
                 }
-                fig_v = px.bar(
-                    x=list(votes_data.keys()),
-                    y=list(votes_data.values()),
-                    title="توزيع أصوات طرق التنبؤ (%)",
-                    color=list(votes_data.values()),
-                    color_continuous_scale='RdYlGn',
-                    labels={'x':'الفئة','y':'الوزن %'}
+                mp = pred['method_probs']
+                fig_mp = go.Figure(go.Bar(
+                    x=[method_labels[k] for k in mp],
+                    y=[v*100 for v in mp.values()],
+                    marker_color=[
+                        '#2ecc71' if v >= 0.60
+                        else '#f39c12' if v >= 0.50
+                        else '#e74c3c'
+                        for v in mp.values()
+                    ],
+                    text=[f"{v*100:.1f}%" for v in mp.values()],
+                    textposition='outside'
+                ))
+                fig_mp.add_hline(
+                    y=50, line_dash="dash",
+                    line_color="gray",
+                    annotation_text="50% خط الحياد"
                 )
-                fig_v.update_layout(
-                    height=280, margin=dict(t=35,b=5)
+                fig_mp.update_layout(
+                    title="احتمال كل طريقة (%)",
+                    yaxis_range=[0,100],
+                    height=300,
+                    margin=dict(t=40,b=5)
                 )
-                st.plotly_chart(fig_v, use_container_width=True)
+                st.plotly_chart(fig_mp, use_container_width=True)
 
-                # تفاصيل الطرق
-                m_rows = []
-                for mname, minfo in pred['methods_detail'].items():
-                    m_rows.append({
-                        'الطريقة'  : mname,
-                        'التوقع'   : CAT_LABELS.get(
-                            minfo['category'], minfo['category']
+                # الإشارات النشطة
+                sigs = pred['signals']
+                sig_rows = []
+                for k, label in method_labels.items():
+                    s = sigs.get(k, {})
+                    sig_rows.append({
+                        'الطريقة': label,
+                        'إشارة'  : (
+                            '✅ نشطة'
+                            if s.get('signal', False)
+                            else '⬜ غائبة'
                         ),
-                        'الثقة %'  : f"{minfo.get('confidence',0)*100:.1f}%"
+                        'الاحتمال': f"{s.get('probability',0)*100:.1f}%"
                     })
                 st.dataframe(
-                    pd.DataFrame(m_rows),
+                    pd.DataFrame(sig_rows),
                     use_container_width=True,
                     hide_index=True
                 )
 
-            # ── توقع القفزات القادمة ─────────────────────
+            # ── توقع القفزات ─────────────────────────────
             st.markdown("---")
-            st.subheader("⏱️ متى تأتي القفزة القادمة؟")
+            st.subheader("⏱️ متى تأتي القفزات القادمة؟")
 
-            jump_rows = []
-            for thr, info in pred['rounds_to_jump'].items():
-                exp_in = float(info['expected_in'])
-                jump_rows.append({
-                    'العتبة'           : thr,
-                    'الفجوة الحالية'   : f"{info['current_gap']} جولة",
-                    'متوسط الفجوة'     : f"{info['mean_gap']:.1f}",
-                    'متوقعة بعد'       : (
-                        f"≈ {exp_in:.0f} جولة"
-                        if exp_in > 0 else "متأخرة!"
+            jf = pred['jump_forecast']
+            jf_rows = []
+            for thr_key, info in jf.items():
+                exp  = float(info['expected_in'])
+                z    = float(info['z_score'])
+                jf_rows.append({
+                    'العتبة'       : thr_key,
+                    'الفجوة الحالية': f"{info['current_gap']} جولة",
+                    'متوقعة بعد'   : (
+                        f"≈ {exp:.0f} جولة"
+                        if exp > 0 else "⚠️ متأخرة!"
                     ),
-                    'المنطقة'          : info['zone']
+                    'المنطقة'      : info['zone'],
+                    'Z-Score'      : f"{z:+.2f}"
                 })
-            st.dataframe(
-                pd.DataFrame(jump_rows),
-                use_container_width=True,
-                hide_index=True
-            )
+            if jf_rows:
+                st.dataframe(
+                    pd.DataFrame(jf_rows),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
             # ════════════════════════════════════════════
-            #              التحليلات التفصيلية
+            #           الأنماط المكتشفة
             # ════════════════════════════════════════════
             st.markdown("---")
-            st.header("📊 التحليلات العلمية")
+            st.header("🔬 الأنماط المكتشفة")
 
-            (t_gap, t_hurst, t_vol, t_spec,
-             t_chg, t_mk, t_dist, t_hist) = st.tabs([
-                "⏱️ تحليل الفجوات",
+            (t1, t2, t3, t4,
+             t5, t6, t7) = st.tabs([
+                "📏 قانون الفجوات",
+                "⚡ المحفزات",
+                "🔤 التسلسلات",
+                "🔮 قواعد إذا-ثم",
+                "📊 ما بعد القفزة",
                 "📐 Hurst",
-                "📉 التقلب",
-                "📡 الطيف",
-                "🔄 نقاط التحول",
-                "🔗 Markov",
-                "📊 التوزيع",
-                "📜 التاريخ"
+                "📡 الدورات"
             ])
 
-            # ── تحليل الفجوات ────────────────────────────
-            with t_gap:
-                st.subheader("⏱️ تحليل الفجوات بين القفزات")
-                gaps = analysis['gaps']
+            # ── قانون الفجوات ────────────────────────────
+            with t1:
+                st.subheader(
+                    "📏 القانون: بعد كم رقم صغير تأتي القفزة؟"
+                )
+                gl = patterns['gap_laws']
 
-                for thr_key, info in gaps.items():
-                    with st.expander(
-                        f"🎯 {thr_key} — الفجوة الحالية: "
-                        f"{info['current_gap']} | {info['zone']}"
-                    ):
-                        ca,cb,cc,cd,ce = st.columns(5)
-                        ca.metric("عدد الظهورات", info['count'])
-                        cb.metric("متوسط الفجوة",
-                                  f"{info['mean_gap']:.1f}")
-                        cc.metric("وسيط الفجوة",
-                                  f"{info['median_gap']:.1f}")
-                        cd.metric("الفجوة الحالية",
-                                  f"{info['current_gap']}")
-                        ce.metric("نسبة الاستحقاق",
-                                  f"{info['due_ratio']}x")
+                for thr_key, info in gl.items():
+                    st.markdown(f"### 🎯 {thr_key}")
 
-                        if info['gaps']:
-                            fig_g = go.Figure()
-                            fig_g.add_trace(go.Bar(
-                                y=info['gaps'],
-                                marker_color=[
-                                    '#e74c3c' if g > info['mean_gap']
-                                    else '#2ecc71'
-                                    for g in info['gaps']
-                                ],
-                                name='الفجوة'
-                            ))
-                            fig_g.add_hline(
-                                y=info['mean_gap'],
-                                line_dash="dash",
-                                line_color="blue",
-                                annotation_text="المتوسط"
-                            )
-                            fig_g.add_hline(
-                                y=info['median_gap'],
-                                line_dash="dot",
-                                line_color="orange",
-                                annotation_text="الوسيط"
-                            )
-                            fig_g.update_layout(
-                                title=f"تاريخ الفجوات — {thr_key}",
-                                height=300
-                            )
-                            st.plotly_chart(
-                                fig_g, use_container_width=True
-                            )
+                    ca,cb,cc,cd,ce = st.columns(5)
+                    ca.metric("عدد القفزات", info['n_jumps'])
+                    cb.metric("متوسط الفجوة", f"{info['mean_gap']:.1f}")
+                    cc.metric("وسيط الفجوة", f"{info['median_gap']:.1f}")
+                    cd.metric("الأكثر شيوعاً",
+                              f"{info['most_common_gap']['gap']} جولة")
+                    ce.metric("تكراره",
+                              f"{info['most_common_gap']['count']}x")
 
-                        # احتمالية الظهور
-                        probs = info['prob_appearances']
-                        p_keys = list(probs.keys())[:10]
-                        p_vals = [probs[k] for k in p_keys]
-                        fig_p = px.bar(
-                            x=p_keys, y=p_vals,
-                            title=f"احتمال ظهور {thr_key} خلال الجولات القادمة",
-                            labels={'x':'','y':'الاحتمال'},
-                            color=p_vals,
+                    # مخطط توزيع الفجوات
+                    gd  = info['gap_distribution']
+                    keys= [int(k) for k in gd.keys()]
+                    vals= list(gd.values())
+                    if keys:
+                        fig_gd = px.bar(
+                            x=keys, y=vals,
+                            title=(
+                                f"توزيع الفجوات قبل {thr_key} — "
+                                f"معظمها بعد "
+                                f"{info['most_common_gap']['gap']} رقم"
+                            ),
+                            labels={
+                                'x':'عدد الأرقام الصغيرة',
+                                'y':'عدد المرات'
+                            },
+                            color=vals,
                             color_continuous_scale='Blues'
                         )
-                        fig_p.update_layout(height=250)
+                        fig_gd.add_vline(
+                            x=info['mean_gap'],
+                            line_dash="dash",
+                            line_color="red",
+                            annotation_text="المتوسط"
+                        )
+                        fig_gd.add_vline(
+                            x=info['median_gap'],
+                            line_dash="dot",
+                            line_color="orange",
+                            annotation_text="الوسيط"
+                        )
                         st.plotly_chart(
-                            fig_p, use_container_width=True
+                            fig_gd, use_container_width=True
                         )
 
-            # ── Hurst ────────────────────────────────────
-            with t_hurst:
-                hurst = analysis['hurst']
-                H     = float(hurst['hurst'])
+                    # احتمالات مشروطة
+                    cp = info['conditional_probs']
+                    if cp:
+                        cp_keys = sorted(cp.keys())[:15]
+                        cp_vals = [cp[k] for k in cp_keys]
+                        fig_cp = go.Figure(go.Bar(
+                            x=cp_keys,
+                            y=[v*100 for v in cp_vals],
+                            marker_color=[
+                                '#2ecc71' if v >= 0.60
+                                else '#f39c12' if v >= 0.45
+                                else '#e74c3c'
+                                for v in cp_vals
+                            ],
+                            text=[f"{v*100:.1f}%" for v in cp_vals],
+                            textposition='outside'
+                        ))
+                        fig_cp.add_hline(
+                            y=float(np.mean(arr>=float(
+                                thr_key.replace('>=','').replace('x','')
+                            ))*100),
+                            line_dash="dash",
+                            line_color="blue",
+                            annotation_text="الاحتمال الأساسي"
+                        )
+                        fig_cp.update_layout(
+                            title=(
+                                f"P({thr_key} | فجوة=k) — "
+                                "هل الفجوة الحالية مميزة؟"
+                            ),
+                            xaxis_title="طول الفجوة k",
+                            yaxis_title="الاحتمال %",
+                            yaxis_range=[0, 110],
+                            height=350
+                        )
+                        st.plotly_chart(
+                            fig_cp, use_container_width=True
+                        )
 
-                st.subheader("📐 Hurst Exponent — طبيعة التسلسل")
+                        # تسليط الضوء على الفجوة الحالية
+                        ls = int(pred['low_streak'])
+                        if ls in cp:
+                            cur_prob = cp[ls]
+                            base_rate = float(
+                                np.mean(arr >= float(
+                                    thr_key.replace('>=','').replace('x','')
+                                ))
+                            )
+                            if cur_prob > base_rate * 1.1:
+                                st.success(
+                                    f"🎯 **الفجوة الحالية = {ls}** | "
+                                    f"احتمال {thr_key}: "
+                                    f"**{cur_prob*100:.1f}%** "
+                                    f"(الأساسي: {base_rate*100:.1f}%)"
+                                )
+
+                    st.markdown("---")
+
+            # ── المحفزات ─────────────────────────────────
+            with t2:
+                st.subheader(
+                    "⚡ قانون المحفزات: بعد X جولات من ظهور Y"
+                )
+                rules = patterns['triggers']['rules']
+                if rules:
+                    df_rules = pd.DataFrame(rules[:15])
+
+                    # مخطط المحفزات
+                    fig_rules = px.scatter(
+                        df_rules,
+                        x='delay',
+                        y='probability',
+                        color='lift',
+                        size='total',
+                        hover_data=['rule'],
+                        title=(
+                            "قواعد المحفزات — "
+                            "المحور X: التأخير، Y: الاحتمال"
+                        ),
+                        color_continuous_scale='RdYlGn',
+                        labels={
+                            'delay'      :'التأخير (جولات)',
+                            'probability':'الاحتمال',
+                            'lift'       :'الارتفاع عن الأساس'
+                        }
+                    )
+                    fig_rules.add_hline(
+                        y=0.5, line_dash="dash",
+                        line_color="gray"
+                    )
+                    st.plotly_chart(
+                        fig_rules, use_container_width=True
+                    )
+
+                    # جدول القواعد
+                    df_show = df_rules[[
+                        'rule','probability','lift',
+                        'hits','total'
+                    ]].copy()
+                    df_show['probability'] = df_show[
+                        'probability'
+                    ].apply(lambda x: f"{x*100:.1f}%")
+                    df_show['lift'] = df_show[
+                        'lift'
+                    ].apply(lambda x: f"+{x*100:.1f}%")
+                    df_show.columns = [
+                        'القاعدة','الاحتمال',
+                        'الارتفاع','النجاحات','الإجمالي'
+                    ]
+                    st.dataframe(
+                        df_show, use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.info("لم تُكتشف قواعد محفزات قوية")
+
+            # ── التسلسلات ────────────────────────────────
+            with t3:
+                st.subheader(
+                    "🔤 التسلسلات التي تسبق القفزات"
+                )
+                seqs = patterns['pre_jump_seqs']
+
+                for thr_key, pats in seqs.items():
+                    if not pats:
+                        continue
+                    st.markdown(f"### 🎯 {thr_key}")
+                    df_seq = pd.DataFrame(pats[:8])
+                    df_seq['probability'] = df_seq[
+                        'probability'
+                    ].apply(lambda x: f"{x*100:.1f}%")
+                    df_seq['lift'] = df_seq[
+                        'lift'
+                    ].apply(lambda x: f"{x*100:+.1f}%")
+                    df_seq.columns = [
+                        'التسلسل','الاحتمال','الأساسي',
+                        'الارتفاع','قبل قفزة','إجمالي'
+                    ]
+                    st.dataframe(
+                        df_seq, use_container_width=True,
+                        hide_index=True
+                    )
+
+                    if pats:
+                        fig_seq = px.bar(
+                            x=[p['sequence'] for p in pats[:8]],
+                            y=[p['probability']*100 for p in pats[:8]],
+                            title=f"احتمال التسلسل يسبق {thr_key}",
+                            labels={
+                                'x':'التسلسل',
+                                'y':'الاحتمال %'
+                            },
+                            color=[
+                                p['probability'] for p in pats[:8]
+                            ],
+                            color_continuous_scale='RdYlGn'
+                        )
+                        st.plotly_chart(
+                            fig_seq, use_container_width=True
+                        )
+
+            # ── قواعد إذا-ثم ─────────────────────────────
+            with t4:
+                st.subheader("🔮 قواعد إذا-ثم المكتشفة")
+                it_rules = patterns['if_then']['if_then_rules']
+                if it_rules:
+                    for rule in it_rules[:10]:
+                        conf_color = (
+                            "success" if rule['probability'] >= 0.65
+                            else "warning" if rule['probability'] >= 0.55
+                            else "info"
+                        )
+                        getattr(st, conf_color)(
+                            f"📌 **{rule['rule_text']}**\n\n"
+                            f"الثقة: {rule['probability']*100:.1f}% | "
+                            f"الارتفاع: +{rule['lift']*100:.1f}% | "
+                            f"العينات: {rule['total']}"
+                        )
+
+                    # مخطط
+                    df_it = pd.DataFrame(it_rules[:10])
+                    fig_it = px.scatter(
+                        df_it,
+                        x='delay',
+                        y='probability',
+                        size='total',
+                        color='lift',
+                        hover_data=['pattern'],
+                        title="قواعد إذا-ثم",
+                        color_continuous_scale='RdYlGn'
+                    )
+                    st.plotly_chart(
+                        fig_it, use_container_width=True
+                    )
+                else:
+                    st.info("لم تُكتشف قواعد إذا-ثم قوية")
+
+            # ── ما بعد القفزة ─────────────────────────────
+            with t5:
+                st.subheader("📊 ماذا يأتي بعد القفزة؟")
+                post = patterns['post_jump']
+
+                for thr_key, info in post.items():
+                    st.markdown(f"### بعد {thr_key}")
+
+                    ca, cb, cc = st.columns(3)
+                    ca.metric(
+                        "متوسط فترة التبريد",
+                        f"{info['cooling_mean']:.1f} جولة"
+                    )
+                    cb.metric(
+                        "وسيط التبريد",
+                        f"{info['cooling_median']:.1f}"
+                    )
+                    cc.metric(
+                        "انحراف التبريد",
+                        f"{info['cooling_std']:.1f}"
+                    )
+
+                    # مخطط ما بعد القفزة
+                    ps = info['post_round_stats']
+                    if ps:
+                        ks = sorted(ps.keys())
+                        pct_high = [
+                            ps[k]['pct_high'] for k in ks
+                        ]
+                        pct_low  = [
+                            ps[k]['pct_low'] for k in ks
+                        ]
+                        means    = [
+                            ps[k]['mean'] for k in ks
+                        ]
+
+                        fig_post = make_subplots(
+                            rows=1, cols=2,
+                            subplot_titles=[
+                                '% >= 2x بعد k جولة',
+                                'متوسط القيمة بعد k جولة'
+                            ]
+                        )
+                        fig_post.add_trace(
+                            go.Bar(
+                                x=ks, y=pct_high,
+                                name='% مرتفع',
+                                marker_color='#2ecc71'
+                            ), row=1, col=1
+                        )
+                        fig_post.add_hline(
+                            y=float(np.mean(arr>=2.0)*100),
+                            line_dash="dash",
+                            line_color="red",
+                            row=1, col=1
+                        )
+                        fig_post.add_trace(
+                            go.Scatter(
+                                x=ks, y=means,
+                                mode='lines+markers',
+                                name='المتوسط',
+                                line=dict(color='steelblue')
+                            ), row=1, col=2
+                        )
+                        fig_post.update_layout(
+                            height=350,
+                            title=f"سلوك السوق بعد {thr_key}"
+                        )
+                        st.plotly_chart(
+                            fig_post, use_container_width=True
+                        )
+                    st.markdown("---")
+
+            # ── Hurst ─────────────────────────────────────
+            with t6:
+                hurst = patterns['hurst']
+                H     = float(hurst['H'])
+
+                st.subheader("📐 Hurst Exponent")
                 ca, cb = st.columns(2)
                 ca.metric(
-                    "Hurst H",
+                    "H",
                     f"{H:.4f}",
                     delta=hurst['interpretation']
                 )
                 cb.metric("R²", f"{hurst['r_squared']:.4f}")
 
-                # مقياس بصري
-                fig_h = go.Figure(go.Indicator(
+                fig_gauge = go.Figure(go.Indicator(
                     mode="gauge+number",
                     value=H,
-                    title={'text':"Hurst Exponent"},
+                    title={'text':"Hurst H"},
                     gauge={
                         'axis': {'range':[0,1]},
-                        'bar' : {'color':'darkblue'},
+                        'bar' : {'color':'navy'},
                         'steps': [
-                            {'range':[0,0.4],
+                            {'range':[0.0,0.4],
                              'color':'#e74c3c'},
                             {'range':[0.4,0.6],
                              'color':'#f1c40f'},
-                            {'range':[0.6,1],
+                            {'range':[0.6,1.0],
                              'color':'#2ecc71'}
-                        ],
-                        'threshold': {
-                            'line':{'color':'black','width':3},
-                            'thickness':0.75,
-                            'value':H
-                        }
+                        ]
                     }
                 ))
-                fig_h.update_layout(height=320)
-                st.plotly_chart(fig_h, use_container_width=True)
-
-                st.info(hurst['interpretation'])
-                st.markdown("""
-| H | المعنى |
-|---|--------|
-| H > 0.6 | تسلسل متجه — الأنماط تستمر |
-| H ≈ 0.5 | عشوائي تام |
-| H < 0.4 | انعكاس للمتوسط |
-                """)
-
-                if len(hurst['lags']) > 0:
-                    fig_hr = px.scatter(
-                        x=np.log(hurst['lags']),
-                        y=np.log(
-                            np.array(hurst['tau_values']) + 1e-9
-                        ),
-                        trendline='ols',
-                        title="تقدير Hurst (log-log regression)",
-                        labels={'x':'log(lag)','y':'log(τ)'}
-                    )
-                    st.plotly_chart(fig_hr, use_container_width=True)
-
-            # ── التقلب ───────────────────────────────────
-            with t_vol:
-                vol = analysis['volatility']
-                st.subheader("📉 تحليل التقلب — GARCH-like")
-
-                ca,cb,cc = st.columns(3)
-                ca.metric(
-                    "نظام التقلب الحالي",
-                    vol['current_regime']
-                )
-                cb.metric(
-                    "P(ارتفاع | تقلب منخفض)",
-                    f"{vol['prob_high_after_low_vol']*100:.1f}%"
-                )
-                cc.metric(
-                    "تجمع التقلبات (ARCH)",
-                    "نعم" if vol['volatility_clustering'] else "لا",
-                    delta=f"corr={vol['arch_correlation']:.3f}"
+                fig_gauge.update_layout(height=320)
+                st.plotly_chart(
+                    fig_gauge, use_container_width=True
                 )
 
-                if vol['vol_series']:
-                    fig_vol = go.Figure()
-                    vs = vol['vol_series']
-                    fig_vol.add_trace(go.Scatter(
-                        y=vs, mode='lines',
-                        name='التقلب',
-                        line=dict(color='purple', width=2)
+                # رسم الانحدار
+                if len(hurst['lags']) > 1:
+                    fig_h = go.Figure()
+                    fig_h.add_trace(go.Scatter(
+                        x=hurst['log_lags'],
+                        y=hurst['log_tau'],
+                        mode='markers',
+                        name='البيانات',
+                        marker=dict(
+                            color='steelblue', size=10
+                        )
                     ))
-                    fig_vol.add_hline(
-                        y=vol['low_vol_threshold'],
-                        line_dash="dash", line_color="green",
-                        annotation_text="حد التقلب المنخفض"
-                    )
-                    fig_vol.add_hline(
-                        y=vol['high_vol_threshold'],
-                        line_dash="dash", line_color="red",
-                        annotation_text="حد التقلب العالي"
-                    )
-                    fig_vol.update_layout(
-                        title="التقلب عبر الزمن",
-                        yaxis_title="التقلب",
+                    fig_h.add_trace(go.Scatter(
+                        x=hurst['log_lags'],
+                        y=hurst['trend_y'],
+                        mode='lines',
+                        name=f'انحدار H={H:.3f}',
+                        line=dict(
+                            color='red', width=2,
+                            dash='dash'
+                        )
+                    ))
+                    fig_h.update_layout(
+                        title=(
+                            f"log-log regression | "
+                            f"R²={hurst['r_squared']:.3f}"
+                        ),
+                        xaxis_title='log(lag)',
+                        yaxis_title='log(τ)',
                         height=380
                     )
                     st.plotly_chart(
-                        fig_vol, use_container_width=True
-                    )
-                    st.caption(
-                        "المناطق الخضراء (تقلب منخفض) تسبق غالباً القفزات الكبيرة"
+                        fig_h, use_container_width=True
                     )
 
-            # ── الطيف ────────────────────────────────────
-            with t_spec:
-                spec = analysis['spectral']
-                st.subheader("📡 التحليل الطيفي — الدورات الزمنية")
+            # ── الدورات ──────────────────────────────────
+            with t7:
+                spec = patterns['spectral']
+                st.subheader("📡 الدورات الزمنية")
 
                 ca, cb = st.columns(2)
-                ca.metric("نسبة الهيمنة",
-                          f"{spec['dominance_ratio']}x")
+                ca.metric(
+                    "نسبة الهيمنة",
+                    f"{spec['dominance']}x"
+                )
                 cb.metric(
-                    "يوجد نمط قوي؟",
-                    "نعم 🔴" if spec['has_pattern'] else "لا ✅"
+                    "دورة قوية؟",
+                    "نعم 🔴" if spec['has_cycle'] else "لا ✅"
                 )
 
-                if spec['welch_cycles']:
-                    df_wc = pd.DataFrame(spec['welch_cycles'])
-                    fig_wc = px.bar(
-                        df_wc,
-                        x='period_rounds',
-                        y='relative_power',
-                        title="دورات Welch PSD (الأقوى)",
-                        color='relative_power',
+                if spec['cycles']:
+                    df_cy = pd.DataFrame(spec['cycles'])
+                    fig_cy = px.bar(
+                        df_cy,
+                        x='period', y='rel_pow',
+                        title="الدورات الزمنية (FFT)",
+                        color='rel_pow',
                         color_continuous_scale='Reds',
                         labels={
-                            'period_rounds':'دورة (جولات)',
-                            'relative_power':'القوة النسبية'
+                            'period' :'الدورة (جولات)',
+                            'rel_pow':'القوة النسبية'
                         },
-                        text='period_rounds'
+                        text='period'
                     )
-                    fig_wc.update_traces(
+                    fig_cy.update_traces(
                         texttemplate='%{text:.0f}j',
                         textposition='outside'
                     )
                     st.plotly_chart(
-                        fig_wc, use_container_width=True
+                        fig_cy, use_container_width=True
                     )
 
-                if len(spec['freqs']) > 1:
+                if spec['freqs'] and spec['psd']:
                     fig_psd = go.Figure()
                     fig_psd.add_trace(go.Scatter(
                         x=spec['freqs'],
                         y=spec['psd'],
                         mode='lines',
                         fill='tozeroy',
-                        name='PSD',
                         line=dict(color='steelblue')
                     ))
                     fig_psd.update_layout(
-                        title="طيف القدرة (Welch PSD)",
+                        title="طيف القدرة (PSD)",
                         xaxis_title="التردد",
                         yaxis_title="القدرة",
                         height=350
@@ -1454,366 +1662,124 @@ if raw_data:
                         fig_psd, use_container_width=True
                     )
 
-                if spec['binary_cycles']:
-                    st.subheader("دورات ثنائية (High/Low)")
-                    df_bc = pd.DataFrame(spec['binary_cycles'])
-                    fig_bc = px.bar(
-                        df_bc, x='period_rounds', y='power',
-                        title="دورات في التسلسل الثنائي",
-                        color='power',
-                        color_continuous_scale='Blues'
-                    )
-                    st.plotly_chart(
-                        fig_bc, use_container_width=True
-                    )
+            # ── آخر 50 جولة ──────────────────────────────
+            st.markdown("---")
+            st.subheader("📜 آخر 50 جولة")
 
-            # ── نقاط التحول ──────────────────────────────
-            with t_chg:
-                chg = analysis['changepoints']
-                st.subheader("🔄 نقاط التحول والأنظمة")
+            def get_color(v):
+                if v >= 10: return '#9b59b6'
+                if v >= 5:  return '#3498db'
+                if v >= 3:  return '#2ecc71'
+                if v >= 2:  return '#f1c40f'
+                if v >= 1.5:return '#e67e22'
+                return '#e74c3c'
 
-                ca, cb, cc = st.columns(3)
-                ca.metric("الحالة الراهنة",
-                          chg['current_state'])
-                cb.metric("% مرتفع حديثاً",
-                          f"{chg['recent_pct']}%")
-                cc.metric("% مرتفع تاريخياً",
-                          f"{chg['hist_pct']}%")
+            last50  = raw_data[-50:]
+            colors50= [get_color(v) for v in last50]
 
-                if chg['positions']:
-                    fig_chg = make_subplots(rows=2, cols=1)
-                    fig_chg.add_trace(
-                        go.Scatter(
-                            x=chg['positions'],
-                            y=chg['pct_high'],
-                            mode='lines+markers',
-                            name='% مرتفع',
-                            line=dict(color='steelblue')
-                        ), row=1, col=1
-                    )
-                    fig_chg.add_hline(
-                        y=chg['hist_pct'],
-                        line_dash="dash",
-                        line_color="red",
-                        row=1, col=1,
-                        annotation_text="المتوسط التاريخي"
-                    )
-                    fig_chg.add_trace(
-                        go.Scatter(
-                            x=chg['positions'],
-                            y=chg['means'],
-                            mode='lines',
-                            name='متوسط القيمة',
-                            line=dict(color='green')
-                        ), row=2, col=1
-                    )
-                    for cp in chg['changepoints']:
-                        for row in [1, 2]:
-                            fig_chg.add_vline(
-                                x=cp['position'],
-                                line_dash="dot",
-                                line_color="red",
-                                row=row, col=1
-                            )
-                    fig_chg.update_layout(
-                        height=500,
-                        title="تطور النظام عبر الزمن"
-                    )
-                    st.plotly_chart(
-                        fig_chg, use_container_width=True
-                    )
-
-                if chg['changepoints']:
-                    st.subheader("نقاط التحول المكتشفة")
-                    df_cp = pd.DataFrame(chg['changepoints'])
-                    st.dataframe(
-                        df_cp, use_container_width=True,
-                        hide_index=True
-                    )
-
-            # ── Markov ───────────────────────────────────
-            with t_mk:
-                mk = analysis['markov']
-                st.subheader("🔗 سلاسل ماركوف المتقدمة")
-
-                # مصفوفة الانتقال
-                matrix = mk['matrix1']
-                df_mat = pd.DataFrame(matrix).T
-                df_mat = df_mat.rename(
-                    index=CAT_LABELS, columns=CAT_LABELS
+            fig_hist = go.Figure()
+            fig_hist.add_trace(go.Bar(
+                x=list(range(len(last50))),
+                y=last50,
+                marker_color=colors50,
+                hovertemplate=(
+                    "جولة %{x}<br>"
+                    "القيمة: %{y:.2f}x<extra></extra>"
                 )
-                fig_heat = px.imshow(
-                    df_mat.values,
-                    x=list(df_mat.columns),
-                    y=list(df_mat.index),
-                    color_continuous_scale='RdYlGn',
-                    title="مصفوفة الانتقال (Markov-1)",
-                    zmin=0, zmax=1,
-                    text_auto='.2f'
+            ))
+            for thr, col, lbl in [
+                (2.0,'blue','2x'),
+                (5.0,'green','5x'),
+                (10.0,'purple','10x')
+            ]:
+                fig_hist.add_hline(
+                    y=thr, line_dash="dash",
+                    line_color=col,
+                    annotation_text=lbl
                 )
-                fig_heat.update_layout(height=400)
-                st.plotly_chart(fig_heat, use_container_width=True)
-
-                # التوزيع الثابت
-                st.subheader("التوزيع الثابت (Stationary Distribution)")
-                stat_df = pd.DataFrame({
-                    'الفئة'     : [CAT_LABELS[c]
-                                   for c in CAT_ORDER],
-                    'الاحتمال'  : [
-                        mk['stationary'].get(c, 0)
-                        for c in CAT_ORDER
-                    ]
-                })
-                fig_stat = px.pie(
-                    stat_df, values='الاحتمال', names='الفئة',
-                    color='الفئة',
-                    title="التوزيع الثابت لـ Markov"
-                )
-                st.plotly_chart(fig_stat, use_container_width=True)
-
-                # الأنماط
-                for order, key, min_prob in [
-                    ('2','order2',0.55),
-                    ('3','order3',0.60),
-                    ('4','order4',0.65)
-                ]:
-                    st.subheader(f"أنماط Markov-{order}")
-                    pats = mk.get(key, [])
-                    if pats:
-                        df_p = pd.DataFrame(pats)
-                        df_p['probability'] = df_p[
-                            'probability'
-                        ].apply(lambda x: f"{x*100:.1f}%")
-                        st.dataframe(
-                            df_p.drop(
-                                columns=['next_cat'],
-                                errors='ignore'
-                            ),
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                    else:
-                        st.info(
-                            f"لا أنماط بثقة >= {int(min_prob*100)}%"
-                        )
-
-            # ── التوزيع ──────────────────────────────────
-            with t_dist:
-                dist = analysis['distribution']
-                st.subheader("📊 تحليل التوزيع")
-
-                ca,cb,cc = st.columns(3)
-                ca.metric("الانحراف (Skewness)",
-                          f"{dist['skewness']:.3f}")
-                cb.metric("التفرطح (Kurtosis)",
-                          f"{dist['kurtosis']:.3f}")
-                cc.metric("شوائب (Anomalies)",
-                          str(dist['n_anomalies']))
-
-                # مقارنة الاحتمالات
-                df_probs = pd.DataFrame({
-                    'العتبة': [f">={t}x" for t in dist['thresholds']],
-                    'الفعلي': [
-                        round(e*100,1)
-                        for e in dist['empirical_probs']
-                    ],
-                    'النظري': [
-                        round(t*100,1)
-                        for t in dist['theoretical_probs']
-                    ],
-                    'الانحراف %': [
-                        round(d*100,2)
-                        for d in dist['deviations']
-                    ]
-                })
-
-                fig_comp = go.Figure()
-                fig_comp.add_trace(go.Bar(
-                    name='فعلي',
-                    x=df_probs['العتبة'],
-                    y=df_probs['الفعلي'],
-                    marker_color='steelblue'
-                ))
-                fig_comp.add_trace(go.Bar(
-                    name='نظري',
-                    x=df_probs['العتبة'],
-                    y=df_probs['النظري'],
-                    marker_color='tomato',
-                    opacity=0.7
-                ))
-                fig_comp.update_layout(
-                    barmode='group',
-                    title="مقارنة الاحتمالات الفعلية بالنظرية",
-                    height=380
-                )
-                st.plotly_chart(fig_comp, use_container_width=True)
-                st.dataframe(
-                    df_probs, use_container_width=True,
-                    hide_index=True
-                )
-                st.info(
-                    f"اختبار KS: stat={dist['ks_statistic']} | "
-                    f"p={dist['ks_pvalue']}"
-                )
-
-            # ── التاريخ ──────────────────────────────────
-            with t_hist:
-                st.subheader("📜 آخر 100 جولة")
-                last_n  = min(100, len(raw_data))
-                last100 = raw_data[-last_n:]
-                cats100 = [categorize(v) for v in last100]
-                colors100 = [CAT_COLORS[c] for c in cats100]
-
-                fig_h100 = go.Figure()
-                fig_h100.add_trace(go.Bar(
-                    x=list(range(len(last100))),
-                    y=last100,
-                    marker_color=colors100,
-                    name='القيمة',
-                    hovertemplate=(
-                        "جولة %{x}<br>"
-                        "القيمة: %{y:.2f}x<extra></extra>"
-                    )
-                ))
-                for thr, color in [
-                    (2.0,'blue'),(5.0,'green'),(10.0,'purple')
-                ]:
-                    fig_h100.add_hline(
-                        y=thr, line_dash="dash",
-                        line_color=color,
-                        annotation_text=f"{thr}x"
-                    )
-                fig_h100.update_layout(
-                    title=f"آخر {last_n} جولة",
-                    xaxis_title="الجولة",
-                    yaxis_title="المضاعف",
-                    height=420
-                )
-                st.plotly_chart(
-                    fig_h100, use_container_width=True
-                )
-
-                # تسلسل الفئات
-                st.subheader("تسلسل الفئات — آخر 30 جولة")
-                last30 = raw_data[-30:]
-                cats30 = [categorize(v) for v in last30]
-                fig_seq = go.Figure()
-                for i, (val, cat) in enumerate(
-                    zip(last30, cats30)
-                ):
-                    fig_seq.add_trace(go.Scatter(
-                        x=[i], y=[val],
-                        mode='markers+text',
-                        marker=dict(
-                            color=CAT_COLORS[cat],
-                            size=20,
-                            symbol='circle'
-                        ),
-                        text=[f"{val:.1f}"],
-                        textposition='top center',
-                        showlegend=False
-                    ))
-                fig_seq.update_layout(
-                    title="تسلسل القيم — اللون يدل على الفئة",
-                    height=300
-                )
-                st.plotly_chart(
-                    fig_seq, use_container_width=True
-                )
+            fig_hist.update_layout(
+                title="آخر 50 جولة",
+                xaxis_title="الجولة",
+                yaxis_title="المضاعف",
+                height=400
+            )
+            st.plotly_chart(fig_hist, use_container_width=True)
 
             # ── الاستنتاج ────────────────────────────────
             st.markdown("---")
-            st.header("📝 الاستنتاج العلمي")
+            st.header("📋 الاستنتاج والقواعد المكتشفة")
 
-            H   = float(analysis['hurst']['hurst'])
-            vol = analysis['volatility']
-            chg = analysis['changepoints']
+            # أبرز القواعد
+            gl = patterns['gap_laws']
+            it = patterns['if_then']['if_then_rules']
+            tr = patterns['triggers']['rules']
+
+            st.subheader("🏆 أبرز الاكتشافات")
 
             findings = []
-            if H > 0.6:
-                findings.append(
-                    f"📈 H={H:.3f}: تسلسل متجه — الأنماط مستمرة"
-                )
-            elif H < 0.4:
-                findings.append(
-                    f"🔄 H={H:.3f}: انعكاس للمتوسط — بعد الارتفاع ينخفض"
-                )
-            if vol['volatility_clustering']:
-                findings.append(
-                    "📊 تجمع التقلبات: فترات هادئة تسبق القفزات"
-                )
-            if analysis['spectral']['has_pattern']:
-                findings.append("📡 دورة زمنية قوية مكتشفة")
 
-            strong_mk = [
-                p for p in analysis['markov']['order3']
-                if p['probability'] >= 0.65
-            ]
-            if strong_mk:
+            for thr_key, info in gl.items():
+                mcg = info['most_common_gap']
                 findings.append(
-                    f"🔗 {len(strong_mk)} نمط Markov-3 بثقة >= 65%"
+                    f"📏 **{thr_key}**: تأتي غالباً بعد "
+                    f"**{mcg['gap']} رقم صغير** "
+                    f"(تكرر {mcg['count']}x) | "
+                    f"متوسط الفجوة: {info['mean_gap']:.1f}"
                 )
 
-            urgent_gaps = [
-                f"{k}: {v['zone']}"
-                for k, v in analysis['gaps'].items()
-                if v['due_ratio'] >= 1.5
-            ]
-            if urgent_gaps:
+            for rule in it[:3]:
                 findings.append(
-                    f"⏱️ قفزات متأخرة: {', '.join(urgent_gaps)}"
+                    f"🔮 **قاعدة إذا-ثم**: {rule['rule_text']}"
+                )
+
+            for rule in tr[:3]:
+                findings.append(
+                    f"⚡ **محفز**: {rule['rule']}"
                 )
 
             for f in findings:
-                st.success(f"✅ {f}")
-
-            if not findings:
-                st.info("لا أنماط قوية — التسلسل يقترب من العشوائية")
+                st.success(f)
 
             # تحميل التقرير
             st.markdown("---")
             report = to_python({
-                'total_samples': n,
-                'prediction'   : {
-                    'category' : pred['final_cat'],
-                    'label'    : pred['final_label'],
-                    'est_value': pred['est_value'],
-                    'prob_high': pred['prob_high'],
-                    'confidence':pred['final_conf'],
-                    'rounds_to_jump': pred['rounds_to_jump']
+                'total_samples'  : n,
+                'prediction'     : {
+                    'prob_high'     : pred['prob_high'],
+                    'verdict'       : pred['verdict'],
+                    'signals_active': pred['signals_active'],
+                    'low_streak'    : pred['low_streak'],
+                    'jump_forecast' : pred['jump_forecast']
                 },
-                'hurst'        : analysis['hurst'],
-                'volatility'   : {
-                    k: v for k, v in analysis['volatility'].items()
-                    if k != 'vol_series'
-                },
-                'changepoints' : analysis['changepoints']['changepoints'],
-                'top_patterns' : {
-                    'order2': analysis['markov']['order2'][:5],
-                    'order3': analysis['markov']['order3'][:5],
-                    'order4': analysis['markov']['order4'][:5]
-                },
-                'gaps_summary' : {
+                'gap_laws_summary': {
                     k: {
-                        kk: vv for kk, vv in v.items()
-                        if kk not in ['gaps','prob_appearances']
+                        'mean_gap'       : v['mean_gap'],
+                        'median_gap'     : v['median_gap'],
+                        'most_common_gap': v['most_common_gap']
                     }
-                    for k, v in analysis['gaps'].items()
+                    for k, v in patterns['gap_laws'].items()
                 },
-                'key_findings' : findings
+                'top_trigger_rules': tr[:5],
+                'top_if_then_rules': it[:5],
+                'hurst'            : {
+                    'H'             : patterns['hurst']['H'],
+                    'interpretation': patterns['hurst']['interpretation']
+                },
+                'key_findings'     : findings
             })
 
             st.download_button(
-                "📥 تحميل التقرير الكامل (JSON)",
+                "📥 تحميل تقرير الأنماط (JSON)",
                 data=json.dumps(
                     report, ensure_ascii=False, indent=2
                 ),
-                file_name="crash_deep_analysis.json",
+                file_name="crash_pattern_report.json",
                 mime="application/json"
             )
 
 st.markdown("---")
 st.caption(
-    "🎓 مشروع تخرج | Hurst • GARCH • Markov-4 • "
-    "Welch PSD • Gap Analysis • Bayesian • Ensemble"
+    "🎓 محلل أنماط Crash الذكي | "
+    "قوانين الفجوات • المحفزات • إذا-ثم • "
+    "التسلسلات • Hurst • التنبؤ الجماعي"
 )
