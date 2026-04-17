@@ -2,1025 +2,1375 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
-from collections import deque
-import random
+from collections import defaultdict
 from datetime import datetime
+import random
+from scipy import stats as scipy_stats
+import warnings
+warnings.filterwarnings('ignore')
 
 st.set_page_config(
-    page_title="🚀 Crash Predictor PRO",
-    page_icon="🚀",
+    page_title="🧠 Crash Intelligence v3",
+    page_icon="🧠",
     layout="wide"
 )
 
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;700;900&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
-    
-    * { font-family: 'Tajawal', sans-serif !important; }
-    body, .main { background: #060610 !important; }
-    
-    /* ===== بطاقات رئيسية ===== */
-    .crash-card {
-        background: linear-gradient(145deg, rgba(10,10,25,0.97), rgba(15,15,35,0.99));
-        border: 1px solid rgba(99, 102, 241, 0.3);
-        box-shadow: 0 20px 60px rgba(0,0,0,0.8), inset 0 1px 0 rgba(99,102,241,0.2);
-        border-radius: 20px;
-        padding: 30px;
-        margin-bottom: 25px;
-        direction: rtl;
-        color: white;
-        position: relative;
-        overflow: hidden;
-    }
-    .crash-card::before {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; right: 0;
-        height: 2px;
-        background: linear-gradient(90deg, transparent, #6366f1, #a855f7, #ec4899, transparent);
-    }
-    
-    /* ===== الحالة الرئيسية ===== */
-    .status-safe {
-        background: linear-gradient(135deg, rgba(0,255,136,0.12), rgba(0,200,100,0.06));
-        border: 2px solid #00ff88;
-        box-shadow: 0 0 30px rgba(0,255,136,0.3), inset 0 0 20px rgba(0,255,136,0.05);
-        border-radius: 16px;
-        padding: 25px;
-        text-align: center;
-        animation: safePulse 2s ease-in-out infinite;
-    }
-    @keyframes safePulse { 0%,100% { box-shadow: 0 0 20px rgba(0,255,136,0.2); } 50% { box-shadow: 0 0 50px rgba(0,255,136,0.5); } }
-    
-    .status-danger {
-        background: linear-gradient(135deg, rgba(255,50,50,0.12), rgba(200,0,0,0.06));
-        border: 2px solid #ff3232;
-        box-shadow: 0 0 30px rgba(255,50,50,0.3), inset 0 0 20px rgba(255,50,50,0.05);
-        border-radius: 16px;
-        padding: 25px;
-        text-align: center;
-        animation: dangerPulse 1s ease-in-out infinite;
-    }
-    @keyframes dangerPulse { 0%,100% { box-shadow: 0 0 20px rgba(255,50,50,0.3); } 50% { box-shadow: 0 0 60px rgba(255,50,50,0.7); } }
-    
-    .status-caution {
-        background: linear-gradient(135deg, rgba(255,200,0,0.12), rgba(255,140,0,0.06));
-        border: 2px solid #FFD700;
-        box-shadow: 0 0 25px rgba(255,215,0,0.25);
-        border-radius: 16px;
-        padding: 25px;
-        text-align: center;
-    }
-    .status-recover {
-        background: linear-gradient(135deg, rgba(139,92,246,0.15), rgba(99,102,241,0.08));
-        border: 2px solid #8b5cf6;
-        box-shadow: 0 0 30px rgba(139,92,246,0.3);
-        border-radius: 16px;
-        padding: 25px;
-        text-align: center;
-        animation: recoverPulse 1.5s ease-in-out infinite;
-    }
-    @keyframes recoverPulse { 0%,100% { box-shadow: 0 0 25px rgba(139,92,246,0.25); } 50% { box-shadow: 0 0 55px rgba(139,92,246,0.55); } }
-    
-    /* ===== شارات الدورات ===== */
-    .round-badge-win {
-        display: inline-block;
-        background: linear-gradient(135deg, #003d1f, #006b37);
-        border: 1px solid #00ff88;
-        color: #00ff88;
-        padding: 8px 16px;
-        border-radius: 12px;
-        font-size: 18px;
-        font-weight: 900;
-        margin: 4px;
-        cursor: pointer;
-        transition: all 0.2s;
-        font-family: 'Orbitron', monospace !important;
-        box-shadow: 0 4px 15px rgba(0,255,136,0.2);
-    }
-    .round-badge-loss {
-        display: inline-block;
-        background: linear-gradient(135deg, #3d0000, #6b0000);
-        border: 1px solid #ff4444;
-        color: #ff6666;
-        padding: 8px 16px;
-        border-radius: 12px;
-        font-size: 18px;
-        font-weight: 900;
-        margin: 4px;
-        font-family: 'Orbitron', monospace !important;
-        box-shadow: 0 4px 15px rgba(255,50,50,0.2);
-    }
-    .round-badge-medium {
-        display: inline-block;
-        background: linear-gradient(135deg, #1a1200, #2a2000);
-        border: 1px solid #FFD700;
-        color: #FFD700;
-        padding: 8px 16px;
-        border-radius: 12px;
-        font-size: 18px;
-        font-weight: 900;
-        margin: 4px;
-        font-family: 'Orbitron', monospace !important;
-        box-shadow: 0 4px 15px rgba(255,215,0,0.2);
-    }
-    
-    /* ===== توصية الرهان ===== */
-    .bet-target {
-        background: linear-gradient(135deg, #0a0a2e, #12124a);
-        border: 2px solid #6366f1;
-        border-radius: 14px;
-        padding: 18px 22px;
-        margin: 8px 0;
-        direction: rtl;
-        box-shadow: 0 8px 25px rgba(99,102,241,0.2);
-        transition: all 0.3s;
-    }
-    .bet-target:hover {
-        border-color: #a855f7;
-        box-shadow: 0 12px 35px rgba(168,85,247,0.3);
-        transform: translateY(-2px);
-    }
-    .multiplier-tag {
-        font-family: 'Orbitron', monospace !important;
-        font-size: 26px;
-        font-weight: 900;
-        color: #00ff88;
-        text-shadow: 0 0 15px rgba(0,255,136,0.5);
-    }
-    .prob-bar {
-        background: rgba(255,255,255,0.05);
-        border-radius: 8px;
-        height: 8px;
-        margin: 8px 0;
-        overflow: hidden;
-    }
-    .prob-fill {
-        height: 100%;
-        border-radius: 8px;
-        background: linear-gradient(90deg, #6366f1, #a855f7, #ec4899);
-        transition: width 0.5s ease;
-    }
-    
-    /* ===== إحصائيات ===== */
-    .stat-box {
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 14px;
-        padding: 18px;
-        text-align: center;
-        direction: rtl;
-    }
-    .stat-number {
-        font-family: 'Orbitron', monospace !important;
-        font-size: 28px;
-        font-weight: 900;
-        background: linear-gradient(90deg, #6366f1, #a855f7);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    .stat-label {
-        color: rgba(255,255,255,0.4);
-        font-size: 12px;
-        margin-top: 5px;
-        letter-spacing: 1px;
-    }
-    
-    /* ===== قائمة الاسترداد ===== */
-    .recover-item {
-        background: rgba(139,92,246,0.08);
-        border: 1px solid rgba(139,92,246,0.3);
-        border-radius: 10px;
-        padding: 12px 18px;
-        margin: 5px 0;
-        direction: rtl;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    
-    /* ===== تحذير ===== */
-    .warning-box {
-        background: rgba(255,100,0,0.08);
-        border: 1px solid rgba(255,100,0,0.4);
-        border-right: 4px solid #ff6400;
-        border-radius: 12px;
-        padding: 15px 20px;
-        color: rgba(255,200,150,0.9);
-        font-size: 14px;
-        direction: rtl;
-        margin: 10px 0;
-    }
-    
-    /* ===== ليبل السيناريو ===== */
-    .scenario-tag {
-        display: inline-block;
-        padding: 4px 14px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 1px;
-        margin: 3px;
-    }
-    .tag-avoid { background: rgba(255,50,50,0.2); color: #ff6666; border: 1px solid #ff4444; }
-    .tag-bet { background: rgba(0,255,136,0.15); color: #00ff88; border: 1px solid #00cc70; }
-    .tag-wait { background: rgba(255,215,0,0.15); color: #FFD700; border: 1px solid #cc9900; }
-    .tag-recover { background: rgba(139,92,246,0.2); color: #c4b5fd; border: 1px solid #8b5cf6; }
-    
-    /* ===== شريط التاريخ ===== */
-    .history-bar {
-        background: rgba(255,255,255,0.02);
-        border: 1px solid rgba(255,255,255,0.07);
-        border-radius: 14px;
-        padding: 15px 20px;
-        direction: rtl;
-        margin: 10px 0;
-    }
-    
-    /* ===== زر الإدخال ===== */
-    .stButton > button {
-        background: linear-gradient(135deg, #6366f1, #8b5cf6, #a855f7) !important;
-        color: white !important;
-        border: none !important;
-        font-weight: 700 !important;
-        font-size: 16px !important;
-        border-radius: 12px !important;
-        padding: 12px 30px !important;
-        box-shadow: 0 8px 25px rgba(99,102,241,0.4) !important;
-        transition: all 0.3s !important;
-        font-family: 'Tajawal' !important;
-    }
-    .stButton > button:hover {
-        transform: translateY(-2px) !important;
-        box-shadow: 0 12px 40px rgba(99,102,241,0.6) !important;
-    }
-    .stNumberInput > div > div > input, .stTextInput > div > div > input {
-        background: rgba(255,255,255,0.05) !important;
-        color: white !important;
-        border: 1px solid rgba(99,102,241,0.4) !important;
-        border-radius: 10px !important;
-        font-family: 'Tajawal' !important;
-    }
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+* { font-family: 'Tajawal', sans-serif !important; }
+html, body, [data-testid="stAppViewContainer"] { background: #04040f !important; }
+[data-testid="stSidebar"] { background: #06060f !important; border-right:1px solid rgba(99,102,241,0.15); }
+
+.card {
+    background: linear-gradient(145deg,rgba(8,8,22,0.98),rgba(12,12,32,0.99));
+    border:1px solid rgba(99,102,241,0.2);
+    box-shadow:0 20px 60px rgba(0,0,0,0.8),inset 0 1px 0 rgba(99,102,241,0.12);
+    border-radius:18px; padding:24px; margin-bottom:16px;
+    direction:rtl; color:white; position:relative; overflow:hidden;
+}
+.card::before {
+    content:''; position:absolute; top:0; left:0; right:0; height:2px;
+    background:linear-gradient(90deg,transparent,#6366f1,#a855f7,#ec4899,transparent);
+}
+
+/* ══ حالات ══ */
+.STATUS-BET {
+    background:linear-gradient(135deg,rgba(0,255,136,0.1),rgba(0,180,90,0.05));
+    border:2px solid #00ff88; border-radius:18px; padding:24px; text-align:center;
+    animation:pSafe 2s ease-in-out infinite;
+}
+@keyframes pSafe{0%,100%{box-shadow:0 0 20px rgba(0,255,136,0.2);}50%{box-shadow:0 0 55px rgba(0,255,136,0.5);}}
+.STATUS-STRONG {
+    background:linear-gradient(135deg,rgba(0,200,255,0.12),rgba(0,130,200,0.06));
+    border:2px solid #00c8ff; border-radius:18px; padding:24px; text-align:center;
+    animation:pStr 1.6s ease-in-out infinite;
+}
+@keyframes pStr{0%,100%{box-shadow:0 0 25px rgba(0,200,255,0.2);}50%{box-shadow:0 0 65px rgba(0,200,255,0.55);}}
+.STATUS-AVOID {
+    background:linear-gradient(135deg,rgba(255,40,40,0.1),rgba(180,0,0,0.05));
+    border:2px solid #ff3232; border-radius:18px; padding:24px; text-align:center;
+    animation:pDng 0.9s ease-in-out infinite;
+}
+@keyframes pDng{0%,100%{box-shadow:0 0 20px rgba(255,50,50,0.3);}50%{box-shadow:0 0 65px rgba(255,50,50,0.7);}}
+.STATUS-WAIT {
+    background:linear-gradient(135deg,rgba(255,200,0,0.09),rgba(255,130,0,0.04));
+    border:2px solid #FFD700; border-radius:18px; padding:24px; text-align:center;
+    box-shadow:0 0 25px rgba(255,215,0,0.12);
+}
+.STATUS-DOUBLE {
+    background:linear-gradient(135deg,rgba(255,100,0,0.12),rgba(200,50,0,0.06));
+    border:2px solid #ff6400; border-radius:18px; padding:24px; text-align:center;
+    animation:pDbl 1.1s ease-in-out infinite;
+}
+@keyframes pDbl{0%,100%{box-shadow:0 0 25px rgba(255,100,0,0.25);}50%{box-shadow:0 0 65px rgba(255,100,0,0.65);}}
+
+/* ══ شارات ══ */
+.badge {
+    display:inline-block; padding:5px 11px; border-radius:9px;
+    font-size:13px; font-weight:900; margin:2px;
+    font-family:'Orbitron',monospace !important;
+    transition:all 0.2s;
+}
+.b-loss{background:#3d0000;border:1px solid #ff4444;color:#ff7070;}
+.b-loss18{background:#5a0000;border:2px solid #ff2020;color:#ff9090;
+           animation:glow-r 1.4s ease-in-out infinite;}
+@keyframes glow-r{0%,100%{box-shadow:0 0 5px rgba(255,30,30,0.3);}
+                   50%{box-shadow:0 0 15px rgba(255,30,30,0.7);}}
+.b-med{background:#1a1200;border:1px solid #FFD700;color:#FFD700;}
+.b-win{background:#003d1f;border:1px solid #00ff88;color:#00ff88;}
+.b-big{background:#1a0030;border:1px solid #a855f7;color:#c4b5fd;}
+.b-gold{background:#2d1800;border:2px solid #ff9500;color:#ffb84d;
+        animation:glow-g 1.3s ease-in-out infinite;}
+@keyframes glow-g{0%,100%{box-shadow:0 0 6px rgba(255,149,0,0.35);}
+                   50%{box-shadow:0 0 20px rgba(255,149,0,0.7);}}
+
+/* ══ kpi ══ */
+.kpi{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);
+     border-radius:12px;padding:14px;text-align:center;direction:rtl;transition:all 0.3s;}
+.kpi:hover{border-color:rgba(99,102,241,0.35);transform:translateY(-2px);}
+.kn{font-family:'Orbitron',monospace!important;font-size:22px;font-weight:900;
+    background:linear-gradient(90deg,#6366f1,#a855f7);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.kl{color:rgba(255,255,255,0.32);font-size:10px;margin-top:3px;letter-spacing:1px;}
+
+/* ══ صناديق ══ */
+.bx-g{background:rgba(0,255,136,0.06);border:1px solid rgba(0,255,136,0.25);
+      border-right:4px solid #00ff88;border-radius:11px;padding:12px 16px;
+      color:rgba(150,255,200,0.9);font-size:13px;direction:rtl;margin:7px 0;line-height:1.8;}
+.bx-r{background:rgba(255,50,50,0.06);border:1px solid rgba(255,50,50,0.25);
+      border-right:4px solid #ff3232;border-radius:11px;padding:12px 16px;
+      color:rgba(255,170,170,0.9);font-size:13px;direction:rtl;margin:7px 0;line-height:1.8;}
+.bx-y{background:rgba(255,200,0,0.06);border:1px solid rgba(255,200,0,0.25);
+      border-right:4px solid #FFD700;border-radius:11px;padding:12px 16px;
+      color:rgba(255,230,150,0.9);font-size:13px;direction:rtl;margin:7px 0;line-height:1.8;}
+.bx-b{background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.25);
+      border-right:4px solid #6366f1;border-radius:11px;padding:12px 16px;
+      color:rgba(180,185,255,0.9);font-size:13px;direction:rtl;margin:7px 0;line-height:1.8;}
+.bx-o{background:rgba(255,149,0,0.07);border:1px solid rgba(255,149,0,0.3);
+      border-right:4px solid #ff9500;border-radius:11px;padding:12px 16px;
+      color:rgba(255,210,150,0.9);font-size:13px;direction:rtl;margin:7px 0;line-height:1.8;}
+
+/* ══ progress ══ */
+.pw{background:rgba(255,255,255,0.05);border-radius:7px;height:7px;margin:5px 0;overflow:hidden;}
+.pf-g{height:100%;border-radius:7px;background:linear-gradient(90deg,#00c853,#00ff88);transition:width 0.6s;}
+.pf-o{height:100%;border-radius:7px;background:linear-gradient(90deg,#ff6d00,#ff9500);transition:width 0.6s;}
+.pf-r{height:100%;border-radius:7px;background:linear-gradient(90deg,#c62828,#ff3232);transition:width 0.6s;}
+.pf-b{height:100%;border-radius:7px;background:linear-gradient(90deg,#6366f1,#a855f7);transition:width 0.6s;}
+
+/* ══ gold card ══ */
+.gc{background:linear-gradient(135deg,rgba(255,149,0,0.09),rgba(255,70,0,0.04));
+    border:1px solid rgba(255,149,0,0.4);border-radius:13px;
+    padding:14px;text-align:center;transition:all 0.3s;}
+.gc:hover{border-color:#ff9500;transform:translateY(-3px);
+          box-shadow:0 10px 28px rgba(255,149,0,0.28);}
+.gn{font-family:'Orbitron',monospace!important;font-size:20px;
+    font-weight:900;color:#ff9500;text-shadow:0 0 10px rgba(255,149,0,0.4);}
+.gt{font-family:'Orbitron',monospace!important;font-size:14px;color:#00ff88;margin-top:4px;}
+
+/* ══ buttons ══ */
+.stButton>button{
+    background:linear-gradient(135deg,#6366f1,#8b5cf6,#a855f7)!important;
+    color:white!important;border:none!important;font-weight:700!important;
+    font-size:13px!important;border-radius:10px!important;padding:9px 20px!important;
+    box-shadow:0 5px 18px rgba(99,102,241,0.4)!important;transition:all 0.3s!important;
+}
+.stButton>button:hover{transform:translateY(-2px)!important;
+                        box-shadow:0 9px 32px rgba(99,102,241,0.6)!important;}
+.stNumberInput>div>div>input{
+    background:rgba(255,255,255,0.05)!important;color:white!important;
+    border:1px solid rgba(99,102,241,0.35)!important;border-radius:9px!important;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════
-# ثوابت وإعدادات
-# ══════════════════════════════════════════════════════
-# قائمة الاستراتيجية: نقاط السحب لوضع الاسترداد
-RECOVERY_TARGETS = [
-    1.01, 1.05, 1.07, 1.09, 1.12, 1.14, 1.19, 1.20, 1.22, 1.24, 1.25, 1.29,
-    1.32, 1.36, 1.45, 1.49, 1.50, 1.53, 1.54, 1.57, 1.59, 1.60, 1.66, 1.73,
-    1.74, 1.76, 1.77, 1.83, 1.84, 1.91, 1.94, 1.96
+# ══════════════════════════════════════════════════════════════════════
+#  البيانات التاريخية + الأرقام الذهبية
+# ══════════════════════════════════════════════════════════════════════
+HISTORICAL_DATA = [
+    8.72,6.75,1.86,2.18,1.25,2.28,1.24,1.2,1.54,24.46,4.16,1.49,
+    1.09,1.47,1.54,1.53,2.1,32.04,11,1.17,1.7,2.61,1.26,22.23,
+    1.77,1.93,3.35,7.01,1.83,9.39,3.31,2.04,1.3,6.65,1.16,3.39,
+    1.95,10.85,1.65,1.22,1.6,4.67,1.85,2.72,1,3.02,1.35,1.3,
+    1.37,17.54,1.18,1,14.4,1.11,6.15,2.39,2.22,1.42,1.23,2.42,
+    1.07,1.24,2.55,7.26,1.69,5.1,2.59,5.51,2.31,2.12,1.97,1.5,
+    3.01,2.29,1.36,4.95,5.09,8.5,1.77,5.52,3.93,1.5,2.28,2.49,
+    18.25,1.68,1.42,2.12,4.17,1.04,2.35,1,1.01,5.46,1.13,2.84,
+    3.39,2.79,1.59,1.53,4.34,2.96,1.06,1.72,2.16,2.2,3.61,2.34,
+    4.49,1.72,1.78,9.27,8.49,2.86,1.66,4.63,9.25,1.35,1,1.64,
+    1.86,2.81,2.44,1.74,1.1,1.29,1.45,8.92,1.24,6.39,1.16,1.19,
+    2.4,4.64,3.17,24.21,1.17,1.42,2.13,1.12,3.78,1.12,1.52,
+    22.81,1.31,1.9,1.38,1.47,2.86,1.79,1.49,1.38,1.84,1.06,3.3,
+    5.97,1,2.92,1.64,5.32,3.26,1.78,2.24,3.16,1.6,1.08,1.55,
+    1.07,1.02,1.23,1.08,5.22,3.32,24.86,3.37,5.16,1.69,2.31,
+    1.07,1.1,1.01,1.36,1.38,1.54,5.34,2.68,5.78,3.63,1.89,8.41,
+    4.06,1.44,1.5,3.17,1.02,1.8,1.9,1.86,1.85,1.73,3.86,3.11,
+    2.44,1.15,2.03,1.05,3.05,1.88,10.13,2.29,1.41,1,5.46,1.26,
+    23.33,1.96,1.03,4.54,1.37,3.5,1.13,1.16,1.43,1.13,1.05,33.27,
+    9.96,1.79,2.07,18.51,5.75,1.15,1.08,5.92,1.38,1.61,12.99,
+    24.72,4.86,1.11,2.86,1.54,3.71,4,7.57,2.03,2.18,5.52,
+    13.37,3.73,2.41,1.79,5.57,4.36,12.33,1.61,3.28,2.89,1.47,
+    1.08,26.89,1.53,2.94,5.29,1.23,1.57,1.12,5.69,3.29,2.72,
+    1.18,5.03,1.1,1.32,1.18,1.07,1.27,4.6
 ]
 
-# حدود الأنماط
-PATTERN_THRESHOLDS = {
-    "big_crash_after_12": 12.90,
-    "crash_after_big_1x9": 1.90,
-    "three_losses_limit": 1.80,
-    "after_loss_range_low": 2.10,
-    "after_loss_range_high": 2.90,
-    "rocket_surge_low": 5.00,
-    "rocket_surge_high": 6.00,
-    "surge_avoid_rounds": 5,
-    "medium_rise": 3.00,
-    "medium_avoid": 4,
-    "double_rise_limit": 2.00,
-    "double_consecutive": 2,
-    "long_loss_streak": 7,
+# الأرقام الذهبية — مُدمجة مع نتائج التحليل الإحصائي
+GOLDEN_DB = {
+    # tier-1: avg_next ≥ 9x مُثبت إحصائياً
+    1.05: {"tier":1,"avg_next":14.48,"med_next":10.13,"win5":0.67,"win2":0.67,
+           "tgt_lo":5.0,"tgt_hi":15.0,"n":3,"label":"زنبرك أقصى"},
+    1.09: {"tier":1,"avg_next":9.73,"med_next":6.15,"win5":0.33,"win2":0.67,
+           "tgt_lo":4.0,"tgt_hi":11.0,"n":3,"label":"زنبرك أقصى"},
+    1.20: {"tier":1,"avg_next":17.17,"med_next":17.17,"win5":0.50,"win2":0.50,
+           "tgt_lo":5.0,"tgt_hi":18.0,"n":2,"label":"زنبرك أقصى"},
+    # tier-2: avg_next 5–9x
+    1.53: {"tier":2,"avg_next":6.74,"med_next":5.34,"win5":0.40,"win2":0.80,
+           "tgt_lo":3.5,"tgt_hi":8.0,"n":5,"label":"إشارة قوية"},
+    1.54: {"tier":2,"avg_next":5.97,"med_next":4.34,"win5":0.40,"win2":0.80,
+           "tgt_lo":3.5,"tgt_hi":7.0,"n":5,"label":"إشارة قوية"},
+    1.77: {"tier":2,"avg_next":8.30,"med_next":5.52,"win5":0.67,"win2":1.00,
+           "tgt_lo":4.0,"tgt_hi":9.0,"n":3,"label":"إشارة قوية"},
+    1.36: {"tier":2,"avg_next":5.53,"med_next":4.95,"win5":0.50,"win2":0.75,
+           "tgt_lo":3.0,"tgt_hi":7.0,"n":4,"label":"إشارة جيدة"},
+    1.84: {"tier":2,"avg_next":6.58,"med_next":6.58,"win5":0.50,"win2":1.00,
+           "tgt_lo":3.5,"tgt_hi":7.0,"n":2,"label":"إشارة جيدة"},
+    1.83: {"tier":2,"avg_next":5.64,"med_next":5.64,"win5":0.50,"win2":1.00,
+           "tgt_lo":3.0,"tgt_hi":7.0,"n":2,"label":"إشارة جيدة"},
+    # tier-3: avg_next 2.5–5x
+    1.01: {"tier":3,"avg_next":3.29,"med_next":2.35,"win5":0.33,"win2":0.67,
+           "tgt_lo":2.0,"tgt_hi":5.0,"n":3,"label":"إشارة متوسطة"},
+    1.07: {"tier":3,"avg_next":2.51,"med_next":2.55,"win5":0.20,"win2":0.60,
+           "tgt_lo":2.0,"tgt_hi":4.0,"n":5,"label":"إشارة متوسطة"},
+    1.12: {"tier":3,"avg_next":4.82,"med_next":3.78,"win5":0.33,"win2":0.67,
+           "tgt_lo":2.5,"tgt_hi":5.5,"n":6,"label":"إشارة متوسطة"},
+    1.19: {"tier":3,"avg_next":3.07,"med_next":2.40,"win5":0.00,"win2":0.67,
+           "tgt_lo":2.0,"tgt_hi":4.0,"n":3,"label":"إشارة متوسطة"},
+    1.22: {"tier":3,"avg_next":3.12,"med_next":2.55,"win5":0.33,"win2":0.33,
+           "tgt_lo":2.0,"tgt_hi":4.5,"n":3,"label":"إشارة متوسطة"},
+    1.24: {"tier":3,"avg_next":4.19,"med_next":2.68,"win5":0.25,"win2":0.75,
+           "tgt_lo":2.0,"tgt_hi":5.0,"n":4,"label":"إشارة متوسطة"},
+    1.29: {"tier":3,"avg_next":5.19,"med_next":4.63,"win5":0.50,"win2":1.00,
+           "tgt_lo":2.5,"tgt_hi":6.0,"n":2,"label":"إشارة متوسطة"},
+    1.45: {"tier":3,"avg_next":5.91,"med_next":5.32,"win5":0.33,"win2":0.67,
+           "tgt_lo":2.5,"tgt_hi":6.5,"n":3,"label":"إشارة متوسطة"},
+    1.49: {"tier":3,"avg_next":4.16,"med_next":4.16,"win5":0.25,"win2":0.75,
+           "tgt_lo":2.0,"tgt_hi":5.0,"n":4,"label":"إشارة متوسطة"},
+    1.66: {"tier":3,"avg_next":7.04,"med_next":7.04,"win5":0.50,"win2":1.00,
+           "tgt_lo":3.0,"tgt_hi":7.5,"n":2,"label":"إشارة متوسطة"},
+}
+GOLDEN_TOL = 0.04
+
+TIER_META = {
+    1:{"icon":"🔥","color":"#ff4500","label":"تير-1"},
+    2:{"icon":"💎","color":"#ff9500","label":"تير-2"},
+    3:{"icon":"✨","color":"#FFD700","label":"تير-3"},
 }
 
-# ══════════════════════════════════════════════════════
-# منطق التحليل المتقدم
-# ══════════════════════════════════════════════════════
-class CrashAnalyzer:
+# ══════════════════════════════════════════════════════════════════════
+#  المحرك الإحصائي الشامل
+# ══════════════════════════════════════════════════════════════════════
+class StatEngine:
     """
-    المحرك الذكي لتحليل أنماط Crash وتوليد التوصيات
+    يدمج كل الفرضيات + المعادلات الإحصائية:
+      - Bayesian confidence
+      - Entropy / Compression ratio
+      - Z-score anomaly detection
+      - Autocorrelation
+      - Kelly Criterion
+      - Markov transition probability
     """
-    def __init__(self, history: list):
-        self.history = history  # قائمة مضاعفات الدورات السابقة (الأحدث في النهاية)
-        self.n = len(history)
 
-    # ──────────────────────────────────────────
-    # 1. كشف الأنماط
-    # ──────────────────────────────────────────
-    def _last(self, count: int) -> list:
-        """آخر N دورات"""
-        return self.history[-count:] if self.n >= count else self.history[:]
+    def __init__(self, history: list, ref_data: list = None):
+        self.h   = history
+        self.n   = len(history)
+        self.ref = ref_data or HISTORICAL_DATA
+        self.arr = np.array(history) if history else np.array([])
 
-    def _is_rise(self, val: float, threshold: float = 2.0) -> bool:
-        return val >= threshold
+    # ══════════════════════════════════════════
+    # 1. أدوات أساسية
+    # ══════════════════════════════════════════
+    def _last(self, k):
+        return self.h[-k:] if self.n >= k else self.h[:]
 
-    def detect_patterns(self) -> list:
+    def _streak(self, thr):
+        c = 0
+        for v in reversed(self.h):
+            if v < thr: c += 1
+            else: break
+        return c
+
+    def _find_golden(self, val):
+        best, bd = None, float("inf")
+        for g, d in GOLDEN_DB.items():
+            df = abs(val - g)
+            if df <= GOLDEN_TOL and df < bd:
+                best, bd = (g, d), df
+        return best  # (gnum, gdata) or None
+
+    # ══════════════════════════════════════════
+    # 2. إحصاءات المرجع من البيانات التاريخية
+    # ══════════════════════════════════════════
+    def _ref_stats(self):
         """
-        يُعيد قائمة بالأنماط المكتشفة
-        كل نمط: {id, name, action, rounds_to_avoid, confidence, reason, icon}
+        يحسب توزيع الانتقال الماركوفي من البيانات التاريخية:
+        P(next ≥ 5 | streak_under_2 = k)
         """
+        ref = self.ref
+        transition = defaultdict(list)
+        for i in range(len(ref) - 1):
+            # احسب الـ streak عند i
+            streak = 0
+            for j in range(i, -1, -1):
+                if ref[j] < 2.0: streak += 1
+                else: break
+            transition[min(streak, 7)].append(ref[i+1])
+
+        result = {}
+        for k, vals in transition.items():
+            arr = np.array(vals)
+            result[k] = {
+                "mean":  round(float(arr.mean()), 3),
+                "med":   round(float(np.median(arr)), 3),
+                "p_gt2": round(float((arr >= 2.0).mean()), 3),
+                "p_gt5": round(float((arr >= 5.0).mean()), 3),
+                "p_gt12":round(float((arr >= 12.0).mean()), 3),
+                "n":     len(vals),
+            }
+        return result
+
+    # ══════════════════════════════════════════
+    # 3. الإنتروبيا — قياس العشوائية
+    # ══════════════════════════════════════════
+    def entropy_score(self, window=10):
+        """
+        Shannon Entropy على نافذة أخيرة.
+        انخفاض الإنتروبيا = السلسلة منتظمة (زنبرك مضغوط).
+        ارتفاع الإنتروبيا = فوضى (لا نمط).
+        """
+        if self.n < 4: return 1.0, 0.0
+        win = self._last(window)
+        # تحويل إلى فئات
+        cats = []
+        for v in win:
+            if v < 1.5:   cats.append(0)
+            elif v < 2.0: cats.append(1)
+            elif v < 5.0: cats.append(2)
+            elif v < 12:  cats.append(3)
+            else:          cats.append(4)
+        # احسب الإنتروبيا
+        from collections import Counter
+        cnt = Counter(cats)
+        probs = np.array([c/len(cats) for c in cnt.values()])
+        ent = -float(np.sum(probs * np.log2(probs + 1e-9)))
+        max_ent = np.log2(5)  # أعلى إنتروبيا ممكنة (5 فئات)
+        compression = 1.0 - ent / max_ent  # 0=فوضى كاملة, 1=نمط مثالي
+        return round(ent, 3), round(compression, 3)
+
+    # ══════════════════════════════════════════
+    # 4. Z-score — كشف الشذوذ
+    # ══════════════════════════════════════════
+    def zscore_last(self):
+        """
+        Z-score للقيمة الأخيرة مقارنة بالتاريخ.
+        z > 2  → قيمة شاذة عالية (قفزة غير عادية)
+        z < -1 → قيمة منخفضة جداً (ضغط الزنبرك)
+        """
+        if self.n < 5: return 0.0
+        ref_arr = np.array(self.ref)
+        mu  = float(ref_arr.mean())
+        std = float(ref_arr.std())
+        if std == 0: return 0.0
+        return round((self.h[-1] - mu) / std, 3)
+
+    # ══════════════════════════════════════════
+    # 5. الارتباط الذاتي — Autocorrelation
+    # ══════════════════════════════════════════
+    def autocorrelation(self, lag=1):
+        """
+        هل هناك ارتباط بين الدورة الحالية والسابقة؟
+        قيمة سالبة = ميل للتذبذب (بعد خسارة يأتي ربح والعكس)
+        قيمة موجبة = ميل للتتابع (خسارة تلو خسارة)
+        """
+        if self.n < lag + 3: return 0.0
+        arr = self.arr
+        if len(arr) <= lag: return 0.0
+        try:
+            corr = float(np.corrcoef(arr[:-lag], arr[lag:])[0,1])
+            return round(corr, 3)
+        except:
+            return 0.0
+
+    # ══════════════════════════════════════════
+    # 6. Bayesian Confidence
+    # ══════════════════════════════════════════
+    def bayesian_confidence(self, prior_p: float, evidence_factors: list) -> float:
+        """
+        P(jump | evidence) باستخدام Bayes البسيط:
+        posterior ∝ prior × likelihood_1 × likelihood_2 × ...
+        كل عامل في evidence_factors هو likelihood ratio (> 1 يرفع, < 1 يخفض)
+        """
+        p = prior_p
+        for lr in evidence_factors:
+            p = (p * lr) / (p * lr + (1 - p) * 1.0)
+            p = max(0.01, min(0.99, p))
+        return round(p, 3)
+
+    # ══════════════════════════════════════════
+    # 7. Kelly Criterion — حجم الرهان الأمثل
+    # ══════════════════════════════════════════
+    def kelly_stake(self, p_win: float, odds: float, balance: float,
+                    fraction: float = 0.25) -> float:
+        """
+        f* = (p*b - q) / b   حيث b = odds - 1, q = 1-p
+        fraction = كسر Kelly (0.25 = ربع Kelly للحماية)
+        """
+        if odds <= 1.0 or p_win <= 0: return 0.0
+        b = odds - 1.0
+        q = 1.0 - p_win
+        kelly_full = (p_win * b - q) / b
+        if kelly_full <= 0: return 0.0
+        kelly_frac = kelly_full * fraction
+        stake = round(balance * kelly_frac, 1)
+        return max(5.0, min(stake, balance * 0.05))  # حد أقصى 5%
+
+    # ══════════════════════════════════════════
+    # 8. Markov — احتمالات الانتقال
+    # ══════════════════════════════════════════
+    def markov_next_probs(self):
+        """
+        احتمالات الدورة القادمة بناءً على الماركوف من البيانات التاريخية
+        """
+        streak = self._streak(2.0)
+        ref_stats = self._ref_stats()
+        k = min(streak, 7)
+        if k in ref_stats:
+            return ref_stats[k]
+        # fallback
+        ref_arr = np.array(self.ref)
+        return {
+            "mean":  round(float(ref_arr.mean()), 3),
+            "p_gt2": round(float((ref_arr >= 2.0).mean()), 3),
+            "p_gt5": round(float((ref_arr >= 5.0).mean()), 3),
+            "p_gt12":round(float((ref_arr >= 12.0).mean()), 3),
+            "n": len(self.ref),
+        }
+
+    # ══════════════════════════════════════════
+    # 9. قوة الزنبرك الإحصائية
+    # ══════════════════════════════════════════
+    def spring_analysis(self):
+        s2  = self._streak(2.0)
+        s18 = self._streak(1.8)
+        s15 = self._streak(1.5)
+        seq = self._last(max(s2, 1))
+        avg_seq = float(np.mean(seq)) if seq else 2.0
+        std_seq = float(np.std(seq)) if len(seq)>1 else 0.0
+
+        # ضغط مركّب
+        pressure = min(100, int(
+            s2  * 9 +
+            s18 * 7 +
+            s15 * 5 +
+            max(0, (1.8 - avg_seq) * 35) +
+            max(0, (3 - std_seq) * 3)
+        ))
+
+        # مستوى الزنبرك
+        if   s18 >= 5: lv, exp_lo, exp_hi = 5, 15.0, 35.0
+        elif s18 >= 3: lv, exp_lo, exp_hi = 4,  8.0, 22.0
+        elif s2  >= 5: lv, exp_lo, exp_hi = 3,  6.0, 18.0
+        elif s2  >= 3: lv, exp_lo, exp_hi = 2,  4.0, 10.0
+        elif s2  >= 2: lv, exp_lo, exp_hi = 1,  2.5,  6.0
+        else:           lv, exp_lo, exp_hi = 0,  0.0,  0.0
+
+        # Markov
+        mk = self.markov_next_probs()
+
+        # رفع الهدف بناء على ماركوف
+        if mk.get("p_gt12", 0) >= 0.15:
+            exp_hi = max(exp_hi, 25.0)
+        elif mk.get("p_gt5", 0) >= 0.35:
+            exp_hi = max(exp_hi, 12.0)
+
+        return {
+            "s2": s2, "s18": s18, "s15": s15,
+            "avg_seq": round(avg_seq, 2),
+            "std_seq": round(std_seq, 2),
+            "pressure": pressure, "level": lv,
+            "exp_lo": exp_lo, "exp_hi": exp_hi,
+            "markov": mk,
+        }
+
+    # ══════════════════════════════════════════
+    # 10. كشف الأنماط الخمسة
+    # ══════════════════════════════════════════
+    def detect_patterns(self, spring: dict):
         patterns = []
-        if self.n == 0:
-            return patterns
+        if self.n < 2: return patterns
+        last = self.h[-1]
 
-        last1 = self.history[-1]
-        last2 = self._last(2)
-        last3 = self._last(3)
-        last5 = self._last(5)
-        last7 = self._last(7)
-
-        # ── النمط 1: انفجار كبير بعد x12.90 ──────────────────
-        # الدورة التالية بعد x≥12.90 → تنفجر بين x1.5 - x1.90
-        if last1 >= PATTERN_THRESHOLDS["big_crash_after_12"]:
+        # P-A: رقم ذهبي
+        gm = self._find_golden(last)
+        if gm:
+            gn, gd = gm
             patterns.append({
-                "id": "P1",
-                "icon": "💥",
-                "name": "ما بعد الانفجار الكبير",
-                "action": "danger",
-                "rounds_to_avoid": 1,
-                "confidence": 88,
-                "reason": f"الدورة الأخيرة كانت x{last1:.2f} (≥12.90). الدورة القادمة ستنفجر في نطاق x1.50-x1.90 غالباً.",
-                "predicted_range": (1.50, 1.90),
-                "bet_suggestion": None,
+                "id":"GOLDEN","priority":1,
+                "gnum":gn,"gdata":gd,
+                "desc":f"رقم ذهبي x{gn} ({gd['label']}) — avg_next={gd['avg_next']}x"
             })
 
-        # ── النمط 2: 3 خسائر متتالية تحت x1.80 ──────────────
-        if len(last3) == 3 and all(v < PATTERN_THRESHOLDS["three_losses_limit"] for v in last3):
+        # P-B: تسلسل هابط (F5)
+        seq5 = self._last(5)
+        drops = sum(1 for i in range(len(seq5)-1) if seq5[i+1] <= seq5[i])
+        if drops >= 3 and float(np.mean(seq5)) < 2.5:
             patterns.append({
-                "id": "P2",
-                "icon": "🔄",
-                "name": "ارتداد بعد 3 خسائر",
-                "action": "bet_range",
-                "rounds_to_avoid": 0,
-                "confidence": 78,
-                "reason": f"3 دورات متتالية تحت x1.80: {[f'x{v:.2f}' for v in last3]}. الارتداد متوقع في نطاق x2.10-x2.90.",
-                "predicted_range": (2.10, 2.90),
-                "bet_suggestion": 2.05,
+                "id":"DESCEND","priority":2,
+                "drops":drops,"avg":round(float(np.mean(seq5)),2),
+                "desc":f"تسلسل هابط {drops}/4 — متوسط x{round(float(np.mean(seq5)),2)}"
             })
 
-        # ── النمط 3: صعود x5 في بداية الدورة ────────────────
-        if last1 >= PATTERN_THRESHOLDS["rocket_surge_low"] and last1 < 12.0:
-            # إذا كان الصعود في منتصف المدى (5-12)
-            patterns.append({
-                "id": "P3",
-                "icon": "🚀",
-                "name": "استكمال الصعود العالي",
-                "action": "bet_range",
-                "rounds_to_avoid": 0,
-                "confidence": 72,
-                "reason": f"الدورة الأخيرة كانت x{last1:.2f}. الدورة القادمة ستُكمل الصعود وتنفجر في نطاق x5-x6.",
-                "predicted_range": (5.0, 6.0),
-                "bet_suggestion": 4.80,
-            })
-
-        # ── النمط 4: صعود ملحوظ فاتك (تجنب 5-6 دورات) ──────
-        # إذا كانت آخر دورة كبيرة جداً (≥5) وأنت لم تدخل
-        if self.n >= 2:
-            second_last = self.history[-2] if self.n >= 2 else 0
-            if second_last >= 5.0 and last1 < 2.0:
-                patterns.append({
-                    "id": "P4",
-                    "icon": "⚠️",
-                    "name": "صعود ملحوظ فاتك",
-                    "action": "avoid",
-                    "rounds_to_avoid": PATTERN_THRESHOLDS["surge_avoid_rounds"],
-                    "confidence": 75,
-                    "reason": f"صعود كبير x{second_last:.2f} تلاه هبوط x{last1:.2f}. الاحتمالات في 5-6 دورات قادمة للخسارة.",
-                    "predicted_range": (1.0, 2.0),
-                    "bet_suggestion": None,
-                })
-
-        # ── النمط 5: صعود x3 (تجنب 4 دورات بعده) ────────────
-        if self.n >= 2:
-            recent = self._last(3)
-            for i, v in enumerate(recent[:-1]):
-                if PATTERN_THRESHOLDS["medium_rise"] <= v < 5.0:
-                    rounds_since = len(recent) - 1 - i
-                    avoid_remaining = PATTERN_THRESHOLDS["medium_avoid"] - rounds_since
-                    if avoid_remaining > 0:
-                        patterns.append({
-                            "id": "P5",
-                            "icon": "📉",
-                            "name": "تجنب ما بعد الصعود المتوسط",
-                            "action": "avoid",
-                            "rounds_to_avoid": avoid_remaining,
-                            "confidence": 68,
-                            "reason": f"وُجد صعود x{v:.2f} قبل {rounds_since+1} دورات. تجنب {avoid_remaining} دورات أخرى.",
-                            "predicted_range": (1.0, 2.0),
-                            "bet_suggestion": None,
-                        })
-                        break
-
-        # ── النمط 6: صعودان متتاليان فوق x2 ────────────────
-        if len(last3) >= 3:
-            rises = [self._is_rise(v) for v in last3]
-            consecutive_rises = 0
-            for r in reversed(rises):
-                if r:
-                    consecutive_rises += 1
+        # P-C: قفزة مزدوجة (F4)
+        for lb in [1, 2]:
+            if self.n > lb and self.h[-(lb+1)] >= 12.0:
+                if last >= 5.0:
+                    patterns.append({
+                        "id":"DOUBLE_JUMP","priority":0,
+                        "prev":self.h[-(lb+1)],"lb":lb,
+                        "desc":f"قفزة مزدوجة! x{self.h[-(lb+1)]:.2f} → x{last:.2f}"
+                    })
                 else:
-                    break
-            if consecutive_rises >= 2:
-                patterns.append({
-                    "id": "P6",
-                    "icon": "🔻",
-                    "name": "7 دورات خسارة بعد صعودين",
-                    "action": "recover",
-                    "rounds_to_avoid": 7,
-                    "confidence": 82,
-                    "reason": f"صعودان متتاليان فوق x2. توقع 7 دورات لن تتخطى x2. شغّل وضع الاسترداد!",
-                    "predicted_range": (1.01, 1.99),
-                    "bet_suggestion": None,
-                })
+                    patterns.append({
+                        "id":"POST_BIG","priority":0,
+                        "prev":self.h[-(lb+1)],"lb":lb,
+                        "avoid": max(1, 3-lb),
+                        "desc":f"تجنب! بعد x{self.h[-(lb+1)]:.2f} بـ{lb} دورة"
+                    })
+                break
 
-        # ── النمط 7: تسلسل 7 خسائر → وضع الاسترداد ─────────
-        if len(last7) == 7 and all(v < 2.0 for v in last7):
+        # P-D: إنتروبيا منخفضة (ضغط انتظام)
+        ent, comp = self.entropy_score()
+        if comp >= 0.45 and spring["level"] >= 2:
             patterns.append({
-                "id": "P7",
-                "icon": "💜",
-                "name": "وضع الاسترداد الكامل",
-                "action": "recover",
-                "rounds_to_avoid": 0,
-                "confidence": 91,
-                "reason": f"7 دورات متتالية تحت x2. وضع الاسترداد نشط الآن — استخدم قائمة النقاط المنخفضة.",
-                "predicted_range": (1.01, 1.96),
-                "bet_suggestion": None,
+                "id":"LOW_ENTROPY","priority":3,
+                "compression":comp,"entropy":ent,
+                "desc":f"إنتروبيا منخفضة ({ent:.2f}) — ضغط انتظام {comp*100:.0f}%"
             })
 
-        # ── النمط 8: دورة انفجار مبكر بعد x12.90 ────────────
-        if self.n >= 2:
-            if self.history[-2] >= 12.90 and last1 < 2.0:
-                patterns.append({
-                    "id": "P8",
-                    "icon": "⚡",
-                    "name": "انفجار بعد انفجار كبير",
-                    "action": "avoid",
-                    "rounds_to_avoid": 2,
-                    "confidence": 80,
-                    "reason": f"تأكيد النمط 1: x{self.history[-2]:.2f} → x{last1:.2f}. الهشاشة مستمرة لدورتين.",
-                    "predicted_range": (1.0, 1.90),
-                    "bet_suggestion": None,
-                })
+        # P-E: z-score سلبي (قيم شاذة منخفضة)
+        z = self.zscore_last()
+        if z <= -0.8 and spring["level"] >= 1:
+            patterns.append({
+                "id":"LOW_ZSCORE","priority":3,
+                "z":z,
+                "desc":f"Z-score={z:.2f} — القيمة الأخيرة منخفضة جداً إحصائياً"
+            })
 
         return patterns
 
-    # ──────────────────────────────────────────
-    # 2. حساب الاحتمالات
-    # ──────────────────────────────────────────
-    def calculate_probabilities(self, patterns: list) -> dict:
-        """ يحسب احتمالية الأنماط القادمة بناءً على التاريخ والقواعد """
-        if self.n == 0:
-            return {"danger": 0.5, "safe": 0.3, "medium": 0.2, "recover": 0.0}
+    # ══════════════════════════════════════════
+    # 11. القرار الشامل
+    # ══════════════════════════════════════════
+    def decide(self, balance: float) -> dict:
+        if self.n < 3:
+            return self._mk_result("WAIT","⏳",
+                "أضف 3 دورات للبدء","","",0,None,None,0,0,{},{})
 
-        # إحصاء بسيط من التاريخ
-        losses = sum(1 for v in self.history if v < 2.0)
-        wins_medium = sum(1 for v in self.history if 2.0 <= v < 5.0)
-        wins_high = sum(1 for v in self.history if v >= 5.0)
+        spring   = self.spring_analysis()
+        patterns = self.detect_patterns(spring)
+        ent, comp = self.entropy_score()
+        z         = self.zscore_last()
+        ac        = self.autocorrelation(1)
+        mk        = spring["markov"]
 
-        base_danger = losses / max(self.n, 1)
-        base_medium = wins_medium / max(self.n, 1)
-        base_high = wins_high / max(self.n, 1)
+        # ─── استخرج الأنماط حسب النوع ───────────────
+        pat_golden  = next((p for p in patterns if p["id"]=="GOLDEN"),      None)
+        pat_desc    = next((p for p in patterns if p["id"]=="DESCEND"),     None)
+        pat_double  = next((p for p in patterns if p["id"]=="DOUBLE_JUMP"), None)
+        pat_postbig = next((p for p in patterns if p["id"]=="POST_BIG"),    None)
+        pat_entropy = next((p for p in patterns if p["id"]=="LOW_ENTROPY"), None)
+        pat_z       = next((p for p in patterns if p["id"]=="LOW_ZSCORE"),  None)
 
-        # تعديل بناءً على الأنماط
-        danger_boost = 0.0
-        safe_boost = 0.0
-        recover_boost = 0.0
+        # ─── أولوية مطلقة: ما بعد القفزة ────────────
+        if pat_postbig:
+            return self._mk_result(
+                "AVOID","⛔",
+                f"تجنب {pat_postbig['avoid']} دورات — بعد قفزة x{pat_postbig['prev']:.2f}",
+                "70% من الحالات التالية لقفزة ≥12x تنتهي بخسارة.",
+                pat_postbig["desc"],
+                confidence=78,
+                tgt_lo=None, tgt_hi=None,
+                stake=0, stake_pct=0,
+                spring=spring, patterns=patterns,
+                extras={"z":z,"ent":ent,"comp":comp,"ac":ac,"mk":mk}
+            )
 
-        for p in patterns:
-            if p["action"] == "danger":
-                danger_boost += 0.25 * (p["confidence"] / 100)
-            elif p["action"] == "avoid":
-                danger_boost += 0.15 * (p["confidence"] / 100)
-            elif p["action"] == "bet_range":
-                safe_boost += 0.20 * (p["confidence"] / 100)
-            elif p["action"] == "recover":
-                recover_boost += 0.30 * (p["confidence"] / 100)
+        # ─── قفزة مزدوجة (نادرة) ─────────────────────
+        if pat_double:
+            p_win  = self.bayesian_confidence(
+                0.25,  # prior P(قفزة مزدوجة) = 25%
+                [1.8 if spring["level"]>=2 else 1.0,
+                 1.5 if pat_golden else 1.0]
+            )
+            stake  = self.kelly_stake(p_win, pat_double["prev"]*0.6, balance, 0.15)
+            tgt_lo = pat_double["prev"] * 0.5
+            tgt_hi = pat_double["prev"] * 0.9
+            return self._mk_result(
+                "DOUBLE","⚡",
+                f"قفزة مزدوجة نادرة! (~{int(p_win*100)}% ثقة)",
+                f"بعد x{pat_double['prev']:.2f} ظهر x{self.h[-1]:.2f}. نمط القفزة المزدوجة.",
+                pat_double["desc"],
+                confidence=int(p_win*100),
+                tgt_lo=round(tgt_lo,1), tgt_hi=round(tgt_hi,1),
+                stake=stake, stake_pct=round(stake/balance*100,1),
+                spring=spring, patterns=patterns,
+                extras={"z":z,"ent":ent,"comp":comp,"ac":ac,"mk":mk,"p_win":p_win}
+            )
 
-        danger = min(0.95, base_danger + danger_boost)
-        safe = min(0.90, base_medium + safe_boost)
-        recover = min(0.95, recover_boost)
+        # ─── بناء likelihood ratios للـ Bayes ─────────
+        lr_list = []
 
-        total = danger + safe + recover + 0.05
-        return {
-            "danger": round(danger / total, 3),
-            "safe": round(safe / total, 3),
-            "medium": round(base_high / total, 3),
-            "recover": round(recover / total, 3),
-        }
+        # LR1: قوة الزنبرك
+        spring_lr = {0:0.6, 1:1.2, 2:1.8, 3:2.5, 4:3.5, 5:4.5}
+        lr_list.append(spring_lr.get(spring["level"], 1.0))
 
-    # ──────────────────────────────────────────
-    # 3. التوصية النهائية
-    # ──────────────────────────────────────────
-    def get_recommendation(self) -> dict:
-        """التوصية الشاملة للدورة القادمة"""
-        patterns = self.detect_patterns()
-        probs = self.calculate_probabilities(patterns)
+        # LR2: رقم ذهبي
+        if pat_golden:
+            gd = pat_golden["gdata"]
+            tier_lr = {1: 3.0, 2: 2.2, 3: 1.5}
+            lr_list.append(tier_lr[gd["tier"]])
+            lr_list.append(1 + gd["win5"])  # معزز بنسبة win5
 
-        # تحديد الحالة
-        if not patterns:
-            return {
-                "status": "neutral",
-                "main_action": "انتظر",
-                "icon": "⏳",
-                "css_class": "status-caution",
-                "title": "لا يوجد نمط واضح",
-                "description": "أضف المزيد من الدورات لتحليل دقيق",
-                "patterns": [],
-                "probs": probs,
-                "bet_targets": [],
-                "recovery_mode": False,
-                "avoid_rounds": 0,
-                "predicted_range": None,
-            }
+        # LR3: تسلسل هابط
+        if pat_desc:
+            lr_list.append(1.4)
 
-        # ترتيب حسب الأولوية
-        priority_order = {"danger": 0, "avoid": 1, "recover": 2, "bet_range": 3, "neutral": 4}
-        sorted_patterns = sorted(patterns, key=lambda p: priority_order.get(p["action"], 5))
-        top = sorted_patterns[0]
+        # LR4: إنتروبيا منخفضة
+        if pat_entropy:
+            lr_list.append(1.0 + comp * 0.8)
 
-        status_map = {
-            "danger": ("danger", "🚫 لا تراهن", "⛔", "status-danger", "خطر عالٍ — دورة انفجار مبكر"),
-            "avoid": ("caution", "⏭️ تجنب", "⚠️", "status-caution", "تجنب هذه الدورات"),
-            "recover": ("recover", "💜 استرداد", "💜", "status-recover", "وضع الاسترداد — راهن بنقاط منخفضة"),
-            "bet_range": ("safe", "✅ راهن", "🚀", "status-safe", "فرصة مناسبة للرهان"),
-        }
-        st_key, action, icon, css, title_sfx = status_map.get(
-            top["action"], ("neutral", "⏳ انتظر", "⏳", "status-caution", "انتظر إشارة أوضح")
+        # LR5: z-score سلبي
+        if pat_z:
+            lr_list.append(1.0 + abs(z) * 0.3)
+
+        # LR6: ماركوف
+        mk_p5 = mk.get("p_gt5", 0.2)
+        lr_list.append(1.0 + mk_p5 * 1.5)
+
+        # LR7: autocorrelation سالب → ميل للتذبذب (مفيد بعد خسارة)
+        if ac < -0.1 and spring["level"] >= 1:
+            lr_list.append(1.2)
+
+        # prior من التوزيع التاريخي
+        ref_arr = np.array(self.ref)
+        prior   = float((ref_arr >= 5.0).mean())   # ~21%
+
+        p_win = self.bayesian_confidence(prior, lr_list)
+
+        # ─── تحديد الهدف ──────────────────────────────
+        if pat_golden:
+            gd = pat_golden["gdata"]
+            tgt_lo = gd["tgt_lo"] + spring["level"] * 0.4
+            tgt_hi = gd["tgt_hi"] + spring["level"] * 1.0
+        else:
+            tgt_lo = spring["exp_lo"] if spring["level"] >= 2 else 2.0
+            tgt_hi = spring["exp_hi"] if spring["level"] >= 2 else 5.0
+
+        # تعديل بالماركوف
+        if mk.get("p_gt12", 0) >= 0.2 and spring["level"] >= 3:
+            tgt_hi = max(tgt_hi, mk.get("mean", tgt_hi) * 1.2)
+
+        # ─── Kelly stake ──────────────────────────────
+        odds   = (tgt_lo + tgt_hi) / 2
+        stake  = self.kelly_stake(p_win, odds, balance, fraction=0.25)
+
+        # ─── تصنيف الحالة ─────────────────────────────
+        # متطلب صارم: يجب أن يكون هناك على الأقل عاملان
+        signal_count = sum([
+            spring["level"] >= 2,
+            pat_golden is not None,
+            pat_desc is not None,
+            pat_entropy is not None,
+            pat_z is not None,
+            mk_p5 >= 0.30,
+        ])
+
+        if p_win >= 0.62 and signal_count >= 3:
+            status = "STRONG"
+            icon   = "🔥"
+            title  = f"إشارة قصوى — {int(p_win*100)}% ثقة"
+            main_d = (f"زنبرك مستوى {spring['level']} + "
+                      f"{signal_count} عوامل تؤكد القفزة القادمة.")
+
+        elif p_win >= 0.48 and signal_count >= 2:
+            status = "BET"
+            icon   = "✅"
+            title  = f"إشارة جيدة — {int(p_win*100)}% ثقة"
+            main_d = (f"زنبرك مستوى {spring['level']} + "
+                      f"{signal_count} عوامل. راهن بحذر.")
+
+        elif spring["level"] >= 3 and not pat_golden:
+            status = "WAIT"
+            icon   = "⏳"
+            title  = f"زنبرك قوي — انتظر الإشارة"
+            main_d = (f"سلسلة {spring['s2']} خسائر <x2. "
+                      f"الزنبرك مضغوط لكن لا رقم ذهبي بعد.")
+            stake  = 0
+
+        elif spring["level"] <= 1 and not pat_golden:
+            status = "AVOID"
+            icon   = "🚫"
+            title  = "لا توجد إشارة — لا تراهن"
+            main_d = "لا تتوفر شروط الدخول. انتظر زنبرك + رقم ذهبي."
+            stake  = 0
+
+        else:
+            # زنبرك متوسط أو رقم ذهبي ضعيف
+            status = "WAIT"
+            icon   = "⏳"
+            title  = f"إشارة ضعيفة — انتظر تأكيداً"
+            main_d = f"ثقة {int(p_win*100)}% فقط. اجمع المزيد من الشواهد."
+            stake  = 0
+
+        return self._mk_result(
+            status, icon, title, main_d, "",
+            confidence=int(p_win*100),
+            tgt_lo=round(tgt_lo,1) if stake > 0 else None,
+            tgt_hi=round(tgt_hi,1) if stake > 0 else None,
+            stake=stake,
+            stake_pct=round(stake/balance*100,1) if stake>0 else 0,
+            spring=spring, patterns=patterns,
+            extras={"z":z,"ent":ent,"comp":comp,"ac":ac,"mk":mk,
+                    "p_win":p_win,"signal_count":signal_count,
+                    "lr_list":lr_list,"prior":prior}
         )
 
-        # قائمة نقاط الرهان
-        pred_range = top.get("predicted_range")
-        bet_targets = []
-        recovery_mode = top["action"] == "recover"
-
-        if recovery_mode:
-            bet_targets = RECOVERY_TARGETS
-        elif top["action"] == "bet_range" and pred_range:
-            low, high = pred_range
-            # اختر نقطة سحب آمنة (أقل من المتوقع بهامش 15%)
-            safe_exit = round(low * 0.88, 2)
-            safe_exit = max(safe_exit, 1.05)
-            bet_targets = [safe_exit, round(low * 0.92, 2), round((low + high) / 2 * 0.85, 2)]
-
+    def _mk_result(self, status, icon, title, desc, sub,
+                   confidence, tgt_lo, tgt_hi, stake, stake_pct,
+                   spring, patterns, extras):
+        profit = 0
+        if stake > 0 and tgt_lo and tgt_hi:
+            profit = round(stake * (tgt_lo + tgt_hi)/2 - stake, 1)
         return {
-            "status": st_key,
-            "main_action": action,
-            "icon": icon,
-            "css_class": css,
-            "title": f"{icon} {title_sfx}",
-            "description": top["reason"],
-            "patterns": sorted_patterns,
-            "probs": probs,
-            "bet_targets": bet_targets,
-            "recovery_mode": recovery_mode,
-            "avoid_rounds": top.get("rounds_to_avoid", 0),
-            "predicted_range": pred_range,
-            "top_confidence": top["confidence"],
+            "status":status,"icon":icon,"title":title,"desc":desc,"sub":sub,
+            "confidence":confidence,"tgt_lo":tgt_lo,"tgt_hi":tgt_hi,
+            "stake":stake,"stake_pct":stake_pct,"profit_est":profit,
+            "spring":spring,"patterns":patterns,"extras":extras,
         }
 
+    # ══════════════════════════════════════════
+    # 12. إحصائيات شاملة
+    # ══════════════════════════════════════════
+    def full_stats(self):
+        if not self.h: return {}
+        a = self.arr
+        sp = self.spring_analysis()
+        ent, comp = self.entropy_score()
+        z  = self.zscore_last()
+        ac = self.autocorrelation(1)
+        mk = self.markov_next_probs()
+        return {
+            "n":len(self.h),
+            "avg":round(float(a.mean()),2),
+            "med":round(float(np.median(a)),2),
+            "std":round(float(a.std()),2),
+            "mx":round(float(a.max()),2),
+            "loss_u2": sum(1 for v in self.h if v<2.0),
+            "loss_u18":sum(1 for v in self.h if v<1.8),
+            "big":     sum(1 for v in self.h if v>=12.0),
+            "win_rate":round(sum(1 for v in self.h if v>=2.0)/len(self.h)*100,1),
+            "streak_2":sp["s2"],"streak_18":sp["s18"],
+            "pressure":sp["pressure"],"level":sp["level"],
+            "entropy":ent,"compression":comp,
+            "zscore":z,"autocorr":ac,
+            "markov":mk,
+        }
 
-# ══════════════════════════════════════════════════════
-# دوال الرسم البياني
-# ══════════════════════════════════════════════════════
-def render_history_chart(history: list):
-    if len(history) < 2:
-        return
+    def golden_in_history(self, k=25):
+        out = []
+        for i, v in enumerate(self.h[-k:]):
+            gm = self._find_golden(v)
+            if gm:
+                out.append({"pos":len(self.h)-k+i+1,"val":v,
+                            "gnum":gm[0],"gdata":gm[1]})
+        return out
 
-    x = list(range(1, len(history) + 1))
-    colors = []
-    for v in history:
-        if v >= 5.0:
-            colors.append("#a855f7")
-        elif v >= 2.0:
-            colors.append("#00ff88")
+    def spring_pressure_series(self):
+        """سلسلة ضغط الزنبرك لكل نقطة في التاريخ"""
+        out = []
+        for i in range(len(self.h)):
+            sub = StatEngine(self.h[:i+1])
+            sp  = sub.spring_analysis()
+            out.append(sp["pressure"])
+        return out
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  الرسوم البيانية
+# ══════════════════════════════════════════════════════════════════════
+def build_main_chart(h: list, engine: StatEngine, pressure_series: list):
+    if len(h) < 2: return
+
+    colors, sizes, symbols = [], [], []
+    for v in h:
+        gm = engine._find_golden(v)
+        if gm:
+            colors.append("#ff9500"); sizes.append(18); symbols.append("star")
+        elif v >= 12:
+            colors.append("#a855f7"); sizes.append(16); symbols.append("diamond")
+        elif v >= 5:
+            colors.append("#00c8ff"); sizes.append(13); symbols.append("circle")
+        elif v >= 2:
+            colors.append("#00ff88"); sizes.append(10); symbols.append("circle")
         else:
-            colors.append("#ff4444")
+            colors.append("#ff4444"); sizes.append(8);  symbols.append("circle")
 
+    x = list(range(1, len(h)+1))
     fig = go.Figure()
 
-    # منطقة الخطر
-    fig.add_hrect(y0=0, y1=2.0, fillcolor="rgba(255,50,50,0.05)", line_width=0,
-                  annotation_text="منطقة الخسارة", annotation_position="left")
-    # منطقة الأمان
-    fig.add_hrect(y0=2.0, y1=5.0, fillcolor="rgba(0,255,136,0.03)", line_width=0)
-    # منطقة الجائزة الكبرى
-    fig.add_hrect(y0=5.0, y1=max(max(history)*1.1, 10), fillcolor="rgba(168,85,247,0.05)", line_width=0,
-                  annotation_text="منطقة الجائزة", annotation_position="left")
+    # مناطق
+    ymax = max(max(h)*1.1, 15)
+    for y0,y1,clr in [(0,1.5,"rgba(255,30,30,0.06)"),
+                       (1.5,2.0,"rgba(255,100,0,0.04)"),
+                       (2.0,5.0,"rgba(0,255,136,0.03)"),
+                       (5.0,12.0,"rgba(0,200,255,0.03)"),
+                       (12.0,ymax,"rgba(168,85,247,0.04)")]:
+        fig.add_hrect(y0=y0, y1=y1, fillcolor=clr, line_width=0)
 
-    # خط الرسم
+    # ضغط الزنبرك
+    px_ = list(range(max(1,len(h)-len(pressure_series)+1), len(h)+1))
     fig.add_trace(go.Scatter(
-        x=x, y=history, mode="lines+markers+text",
-        line=dict(color="rgba(99,102,241,0.6)", width=2, shape="spline"),
-        marker=dict(color=colors, size=12, line=dict(color="rgba(255,255,255,0.3)", width=1)),
-        text=[f"x{v:.2f}" for v in history],
+        x=px_, y=pressure_series, name="ضغط الزنبرك",
+        yaxis="y2", mode="lines",
+        line=dict(color="rgba(255,149,0,0.4)", width=2, dash="dot"),
+        fill="tozeroy", fillcolor="rgba(255,149,0,0.06)",
+    ))
+
+    # المضاعفات
+    fig.add_trace(go.Scatter(
+        x=x, y=h, mode="lines+markers+text",
+        line=dict(color="rgba(99,102,241,0.5)", width=2, shape="spline"),
+        marker=dict(color=colors, size=sizes, symbol=symbols,
+                    line=dict(color="rgba(255,255,255,0.2)", width=1)),
+        text=[f"x{v:.2f}" for v in h],
         textposition="top center",
-        textfont=dict(color="white", size=10, family="Orbitron"),
+        textfont=dict(color="rgba(255,255,255,0.7)", size=8, family="Orbitron"),
+        name="المضاعف",
     ))
 
-    # خط الإشارة عند 2.0
-    fig.add_hline(y=2.0, line_dash="dash", line_color="rgba(255,215,0,0.4)", line_width=1)
+    for yv, cl, lb in [(1.5,"rgba(255,50,50,0.5)","x1.5"),
+                        (2.0,"rgba(255,215,0,0.5)","x2"),
+                        (5.0,"rgba(0,200,255,0.5)","x5"),
+                        (12.0,"rgba(168,85,247,0.5)","x12")]:
+        fig.add_hline(y=yv, line_dash="dot", line_color=cl, line_width=1,
+                      annotation_text=lb, annotation_font=dict(color=cl, size=9))
 
     fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color="white", family="Tajawal"),
-        height=300,
-        margin=dict(l=10, r=10, t=20, b=10),
-        xaxis=dict(showgrid=False, title="الدورة", tickfont=dict(color="rgba(255,255,255,0.4)")),
-        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.05)", title="المضاعف",
-                   tickprefix="x", tickfont=dict(color="rgba(255,255,255,0.4)")),
-        showlegend=False,
+        height=370, margin=dict(l=10,r=10,t=25,b=10),
+        xaxis=dict(showgrid=False, title="الدورة",
+                   tickfont=dict(color="rgba(255,255,255,0.3)")),
+        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.04)",
+                   title="المضاعف", tickprefix="x",
+                   tickfont=dict(color="rgba(255,255,255,0.3)")),
+        yaxis2=dict(overlaying="y", side="right", range=[0,110],
+                    showgrid=False, showticklabels=False),
+        legend=dict(orientation="h", y=1.06,
+                    font=dict(size=10,color="rgba(255,255,255,0.4)"),
+                    bgcolor="rgba(0,0,0,0)"),
     )
-    st.plotly_chart(fig, use_container_width=True, key=f"hist_{len(history)}")
+    st.plotly_chart(fig, use_container_width=True, key=f"mc_{len(h)}")
 
 
-def render_probability_chart(probs: dict):
-    labels = ["خطر (< x2)", "متوسط (x2-x5)", "عالي (> x5)", "استرداد"]
-    values = [probs["danger"]*100, probs["safe"]*100, probs["medium"]*100, probs["recover"]*100]
-    colors_pie = ["#ff4444", "#00ff88", "#a855f7", "#6366f1"]
+def build_gauge(val, label, key, lo=0, hi=100, thresholds=None):
+    if thresholds is None:
+        thresholds = [(40,"#ff4444"),(70,"#FFD700"),(100,"#00ff88")]
+    color = thresholds[-1][1]
+    for thr, clr in thresholds:
+        if val <= thr: color = clr; break
 
-    fig = go.Figure(go.Pie(
-        labels=labels, values=values, hole=0.65,
-        marker=dict(colors=colors_pie, line=dict(color="rgba(0,0,0,0.5)", width=2)),
-        textfont=dict(color="white", size=12, family="Tajawal"),
-        textinfo="label+percent",
-    ))
-
-    fig.add_annotation(
-        text=f"<b>{max(values):.0f}%</b><br>أعلى<br>احتمال",
-        x=0.5, y=0.5, showarrow=False,
-        font=dict(size=16, color="white", family="Tajawal"),
-        align="center"
-    )
-
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="white", family="Tajawal"),
-        height=280,
-        margin=dict(l=10, r=10, t=20, b=10),
-        showlegend=True,
-        legend=dict(
-            orientation="h", yanchor="bottom", y=-0.2,
-            font=dict(size=11, color="rgba(255,255,255,0.6)"),
-            bgcolor="rgba(0,0,0,0)"
-        ),
-    )
-    st.plotly_chart(fig, use_container_width=True, key=f"prob_{sum(v for v in probs.values())}")
-
-
-def render_confidence_bar(confidence: int, label: str, key: str):
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
-        value=confidence,
-        title={"text": label, "font": {"size": 13, "color": "rgba(255,255,255,0.7)", "family": "Tajawal"}},
-        number={"suffix": "%", "font": {"size": 30, "color": "#a855f7", "family": "Orbitron"}},
+        value=val,
+        title={"text":label,"font":{"size":11,"color":"rgba(255,255,255,0.55)","family":"Tajawal"}},
+        number={"font":{"size":26,"color":color,"family":"Orbitron"}},
         gauge={
-            "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "rgba(255,255,255,0.2)"},
-            "bar": {"color": "#6366f1", "thickness": 0.35},
-            "bgcolor": "rgba(0,0,0,0.2)",
-            "borderwidth": 0,
-            "steps": [
-                {"range": [0, 40], "color": "rgba(255,50,50,0.1)"},
-                {"range": [40, 70], "color": "rgba(255,215,0,0.1)"},
-                {"range": [70, 100], "color": "rgba(0,255,136,0.1)"},
+            "axis":{"range":[lo,hi],"tickwidth":1,"tickcolor":"rgba(255,255,255,0.12)"},
+            "bar":{"color":color,"thickness":0.26},
+            "bgcolor":"rgba(0,0,0,0.18)","borderwidth":0,
+            "steps":[
+                {"range":[lo,lo+(hi-lo)*0.4],"color":"rgba(255,50,50,0.07)"},
+                {"range":[lo+(hi-lo)*0.4,lo+(hi-lo)*0.7],"color":"rgba(255,215,0,0.07)"},
+                {"range":[lo+(hi-lo)*0.7,hi],"color":"rgba(0,255,136,0.07)"},
             ],
         }
     ))
+    fig.update_layout(height=185, margin=dict(l=8,r=8,t=40,b=5),
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+    st.plotly_chart(fig, use_container_width=True, key=key)
+
+
+def build_stat_radar(extras: dict, key: str):
+    """مخطط شبكي للعوامل الإحصائية"""
+    p_win    = extras.get("p_win", 0.3)
+    comp     = extras.get("comp", 0.0)
+    mk_p5    = extras.get("mk", {}).get("p_gt5", 0.2)
+    ac_norm  = max(0, -extras.get("ac", 0) * 100)  # سالب → مفيد
+    z_norm   = max(0, min(100, (2 - extras.get("z",0)) * 20))
+    sc       = extras.get("signal_count", 0) / 6 * 100
+
+    cats = ["ثقة Bayes","ضغط الإنتروبيا",
+            "Markov ≥x5","Autocorr","Z-score","إشارات"]
+    vals = [p_win*100, comp*100, mk_p5*100, ac_norm, z_norm, sc]
+
+    fig = go.Figure(go.Scatterpolar(
+        r=vals+[vals[0]], theta=cats+[cats[0]],
+        fill="toself",
+        fillcolor="rgba(99,102,241,0.12)",
+        line=dict(color="#6366f1", width=2),
+        marker=dict(color="#a855f7", size=7),
+    ))
     fig.update_layout(
-        height=200, margin=dict(l=10, r=10, t=40, b=10),
+        polar=dict(
+            bgcolor="rgba(0,0,0,0)",
+            radialaxis=dict(visible=True, range=[0,100],
+                            tickfont=dict(color="rgba(255,255,255,0.3)",size=8),
+                            gridcolor="rgba(255,255,255,0.07)"),
+            angularaxis=dict(tickfont=dict(color="rgba(255,255,255,0.55)",size=10,
+                                           family="Tajawal"),
+                             gridcolor="rgba(255,255,255,0.07)"),
+        ),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        height=300, margin=dict(l=30,r=30,t=20,b=20),
+        showlegend=False,
     )
     st.plotly_chart(fig, use_container_width=True, key=key)
 
 
-# ══════════════════════════════════════════════════════
-# إدارة الحالة
-# ══════════════════════════════════════════════════════
-if "crash_history" not in st.session_state:
-    st.session_state.crash_history = []
-if "balance" not in st.session_state:
-    st.session_state.balance = 1000.0
-if "session_log" not in st.session_state:
-    st.session_state.session_log = []
+def build_distribution(h: list, key: str):
+    bins   = [0, 1.5, 2.0, 5.0, 12.0, 1000]
+    labels = ["<x1.5","x1.5–2","x2–5","x5–12","≥x12"]
+    clrs   = ["#ff3232","#ff9500","#00ff88","#00c8ff","#a855f7"]
+    counts = [sum(1 for v in h if bins[i]<=v<bins[i+1]) for i in range(len(bins)-1)]
+    total  = sum(counts)
+    pcts   = [round(c/total*100,1) for c in counts]
 
-# ══════════════════════════════════════════════════════
-# الواجهة الرئيسية
-# ══════════════════════════════════════════════════════
+    fig = go.Figure(go.Bar(
+        x=labels, y=counts, marker_color=clrs,
+        text=[f"{p}%" for p in pcts],
+        textposition="outside",
+        textfont=dict(color="white",size=11,family="Orbitron"),
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="white",family="Tajawal"),
+        height=220, margin=dict(l=8,r=8,t=15,b=10),
+        xaxis=dict(showgrid=False,tickfont=dict(color="rgba(255,255,255,0.45)")),
+        yaxis=dict(showgrid=True,gridcolor="rgba(255,255,255,0.05)",
+                   tickfont=dict(color="rgba(255,255,255,0.35)")),
+        showlegend=False,
+    )
+    st.plotly_chart(fig, use_container_width=True, key=key)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  الجلسة
+# ══════════════════════════════════════════════════════════════════════
+for k, v in [("history",[]),("balance",1000.0),("log",[])]:
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# ══════════════════════════════════════════════════════════════════════
+#  الواجهة
+# ══════════════════════════════════════════════════════════════════════
 st.markdown("""
-<div style="text-align:center; padding: 20px 0 10px;">
-    <div style="font-family:'Orbitron',monospace; font-size:42px; font-weight:900; background: linear-gradient(90deg, #6366f1, #a855f7, #ec4899, #a855f7, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-size: 200%; animation: gradientShift 3s linear infinite;">
-        🚀 CRASH PREDICTOR PRO
-    </div>
-    <div style="color:rgba(255,255,255,0.4); font-size:14px; letter-spacing:3px; margin-top:5px;">
-        نظام التحليل الذكي للأنماط
-    </div>
+<div style="text-align:center;padding:16px 0 6px;">
+<div style="font-family:'Orbitron',monospace;font-size:32px;font-weight:900;
+            background:linear-gradient(90deg,#6366f1,#a855f7,#ec4899,#a855f7,#6366f1);
+            -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+            background-size:200%;animation:gs 3s linear infinite;">
+🧠 CRASH INTELLIGENCE v3
 </div>
-<style>
-    @keyframes gradientShift { 0%{background-position:0%} 100%{background-position:200%} }
-</style>
+<div style="color:rgba(255,255,255,0.28);font-size:11px;letter-spacing:4px;margin-top:3px;">
+Bayesian · Markov · Entropy · Z-score · Kelly · Autocorrelation
+</div>
+</div>
+<style>@keyframes gs{0%{background-position:0%}100%{background-position:200%}}</style>
 """, unsafe_allow_html=True)
 
-# ── الشريط الجانبي ──────────────────────────────────
+# ══ الشريط الجانبي ══════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown('<div style="text-align:center; color:#a855f7; font-size:20px; font-weight:700; margin-bottom:15px;">⚙️ لوحة التحكم</div>', unsafe_allow_html=True)
+    st.markdown('<div style="text-align:center;color:#a855f7;font-size:16px;font-weight:700;margin-bottom:10px;">⚙️ التحكم</div>', unsafe_allow_html=True)
 
     st.markdown("**💰 الرصيد**")
     st.session_state.balance = st.number_input(
-        "رصيدك الحالي", min_value=10.0, max_value=1_000_000.0,
+        "bal", min_value=10.0, max_value=999999.0,
         value=st.session_state.balance, step=50.0, label_visibility="collapsed"
     )
+    st.markdown("---")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("🗑️ مسح", use_container_width=True):
+            st.session_state.history=[]; st.session_state.log=[]; st.rerun()
+    with c2:
+        if st.button("📊 ديمو", use_container_width=True):
+            st.session_state.history = HISTORICAL_DATA[:60]; st.rerun()
+
+    if st.button("🎲 محاكاة واقعية (20)", use_container_width=True):
+        sim=[]
+        for _ in range(20):
+            r=random.random()
+            if   r<0.35: sim.append(round(random.uniform(1.0,1.49),2))
+            elif r<0.50: sim.append(round(random.uniform(1.5,1.99),2))
+            elif r<0.72: sim.append(round(random.uniform(2.0,4.99),2))
+            elif r<0.88: sim.append(round(random.uniform(5.0,11.99),2))
+            else:         sim.append(round(random.uniform(12.0,40.0),2))
+        st.session_state.history=sim; st.rerun()
 
     st.markdown("---")
-    st.markdown("**📊 إعدادات التحليل**")
-    min_history = st.slider("أقل عدد دورات للتحليل", 3, 10, 5)
-    show_all_patterns = st.checkbox("إظهار كل الأنماط", value=True)
-    auto_recovery_threshold = st.slider("حد تفعيل الاسترداد (خسائر متتالية)", 3, 7, 5)
+    # دليل الأرقام الذهبية مضغوط
+    st.markdown("**⭐ الأرقام الذهبية**")
+    for tier in [1,2,3]:
+        m = TIER_META[tier]
+        nums = [(g,d) for g,d in GOLDEN_DB.items() if d["tier"]==tier]
+        st.markdown(f'<div style="color:{m["color"]};font-size:11px;font-weight:700;margin:6px 0 2px;">{m["icon"]} {m["label"]}</div>', unsafe_allow_html=True)
+        for g,d in nums:
+            st.markdown(f"""
+            <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);
+                        border-radius:6px;padding:3px 8px;margin:1px 0;
+                        display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-family:'Orbitron',monospace;color:{m['color']};font-size:11px;font-weight:700;">x{g}</span>
+                <span style="color:rgba(255,255,255,0.3);font-size:9px;">→x{d['tgt_lo']}–{d['tgt_hi']}</span>
+                <span style="color:rgba(255,255,255,0.2);font-size:9px;">avg:{d['avg_next']}x</span>
+            </div>""", unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.markdown("**🔧 أدوات**")
-    if st.button("🗑️ مسح السجل", use_container_width=True):
-        st.session_state.crash_history = []
-        st.session_state.session_log = []
-        st.rerun()
-
-    if st.button("🎲 محاكاة (تجريبي)", use_container_width=True):
-        # توليد 10 دورات عشوائية بتوزيع واقعي
-        sim = []
-        for _ in range(10):
-            r = random.random()
-            if r < 0.50:
-                sim.append(round(random.uniform(1.0, 1.99), 2))
-            elif r < 0.75:
-                sim.append(round(random.uniform(2.0, 4.99), 2))
-            elif r < 0.92:
-                sim.append(round(random.uniform(5.0, 12.0), 2))
-            else:
-                sim.append(round(random.uniform(12.0, 50.0), 2))
-        st.session_state.crash_history = sim
-        st.rerun()
-
-    st.markdown("---")
     # إحصائيات الجلسة
-    h = st.session_state.crash_history
+    h = st.session_state.history
     if h:
-        losses = sum(1 for v in h if v < 2.0)
-        wins = len(h) - losses
-        avg = np.mean(h)
-        st.markdown(f"""
-        <div class="stat-box" style="margin:5px 0;">
-            <div class="stat-number">{len(h)}</div>
-            <div class="stat-label">إجمالي الدورات</div>
-        </div>
-        <div class="stat-box" style="margin:5px 0;">
-            <div class="stat-number" style="color:#00ff88;">{wins}</div>
-            <div class="stat-label">دورات فوق x2</div>
-        </div>
-        <div class="stat-box" style="margin:5px 0;">
-            <div class="stat-number" style="color:#ff4444;">{losses}</div>
-            <div class="stat-label">دورات خسارة</div>
-        </div>
-        <div class="stat-box" style="margin:5px 0;">
-            <div class="stat-number">{avg:.2f}x</div>
-            <div class="stat-label">متوسط المضاعف</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("---")
+        eng_s = StatEngine(h)
+        s = eng_s.full_stats()
+        items = [
+            (s['n'],"الدورات"),
+            (f"{s['streak_2']}","خسائر <x2","#ff4444"),
+            (f"{s['pressure']}%","ضغط الزنبرك","#ff9500"),
+            (f"{s['win_rate']}%","فوق x2","#00ff88"),
+            (f"{s['entropy']:.2f}","إنتروبيا","#6366f1"),
+            (f"{s['zscore']:.2f}","Z-score","#a855f7"),
+        ]
+        for item in items:
+            val, lbl = item[0], item[1]
+            clr = item[2] if len(item)>2 else None
+            color_style = f'color:{clr};' if clr else ''
+            st.markdown(f"""
+            <div class="kpi" style="margin:3px 0;">
+                <div class="kn" style="{color_style}">{val}</div>
+                <div class="kl">{lbl}</div>
+            </div>""", unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════
-# منطقة الإدخال
-# ══════════════════════════════════════════════════════
-st.markdown('<div class="crash-card">', unsafe_allow_html=True)
-st.markdown("### 📥 أدخل نتيجة الدورة الأخيرة")
-
-col_in1, col_in2, col_in3 = st.columns([2, 1, 1])
-with col_in1:
-    new_value = st.number_input(
-        "مضاعف الانفجار (مثال: 1.45 أو 7.20)",
-        min_value=1.00, max_value=1000.0, value=1.50, step=0.01,
-        format="%.2f", label_visibility="collapsed"
-    )
-with col_in2:
-    if st.button("➕ أضف الدورة", use_container_width=True):
-        st.session_state.crash_history.append(round(new_value, 2))
-        # حفظ في السجل مع الوقت
-        st.session_state.session_log.append({
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "value": round(new_value, 2),
-            "index": len(st.session_state.crash_history),
-        })
+# ══ منطقة الإدخال ════════════════════════════════════════════════════
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.markdown("### 📥 إدخال الدورة")
+ci1,ci2,ci3,ci4 = st.columns([2.5,1,1,1])
+with ci1:
+    new_val = st.number_input("v",min_value=1.00,max_value=1000.0,
+                               value=1.50,step=0.01,format="%.2f",
+                               label_visibility="collapsed")
+with ci2:
+    if st.button("➕ أضف", use_container_width=True):
+        st.session_state.history.append(round(new_val,2))
+        st.session_state.log.append({"t":datetime.now().strftime("%H:%M:%S"),
+                                      "v":round(new_val,2)})
         st.rerun()
-with col_in3:
-    if st.button("↩️ حذف آخر دورة", use_container_width=True):
-        if st.session_state.crash_history:
-            st.session_state.crash_history.pop()
-        if st.session_state.session_log:
-            st.session_state.session_log.pop()
+with ci3:
+    if st.button("↩️ حذف", use_container_width=True):
+        if st.session_state.history: st.session_state.history.pop()
+        if st.session_state.log: st.session_state.log.pop()
         st.rerun()
+with ci4:
+    if st.button("🔄 تحديث", use_container_width=True): st.rerun()
 
-# عرض شريط الدورات
-h = st.session_state.crash_history
+# شريط الدورات
+h = st.session_state.history
 if h:
-    st.markdown("**📋 سجل الدورات:**")
-    badges_html = '<div class="history-bar">'
-    for i, v in enumerate(h[-20:]):  # آخر 20
-        if v >= 5.0:
-            cls = "round-badge-win"
-        elif v >= 2.0:
-            cls = "round-badge-medium"
-        else:
-            cls = "round-badge-loss"
-        idx = max(0, len(h) - 20) + i + 1
-        badges_html += f'<span class="{cls}" title="الدورة {idx}">x{v:.2f}</span>'
-    badges_html += '</div>'
-    st.markdown(badges_html, unsafe_allow_html=True)
+    st.markdown("**📋 آخر الدورات:**")
+    eng_t = StatEngine(h)
+    b = '<div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:12px 16px;line-height:2.4;">'
+    for v in h[-35:]:
+        gm = eng_t._find_golden(v)
+        if gm:           cls="b-gold"
+        elif v>=12.0:    cls="b-big"
+        elif v>=5.0:     cls="b-win"
+        elif v>=2.0:     cls="b-med"
+        elif v>=1.8:     cls="b-loss"
+        else:            cls="b-loss18"
+        sfx="⭐" if gm else ""
+        b+=f'<span class="badge {cls}">x{v:.2f}{sfx}</span>'
+    b+="</div>"
+    st.markdown(b, unsafe_allow_html=True)
+    st.markdown("""
+    <div style="font-size:10px;color:rgba(255,255,255,0.25);direction:rtl;margin-top:3px;">
+    <span style="color:#ff9500;">⭐ذهبي</span> |
+    <span style="color:#a855f7;">■</span>≥x12 |
+    <span style="color:#00ff88;">■</span>x5–12 |
+    <span style="color:#FFD700;">■</span>x2–5 |
+    <span style="color:#ff4444;">■</span>x1.8–2 |
+    <span style="color:#ff2020;">■</span>&lt;x1.8
+    </div>""", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
 
-st.markdown('</div>', unsafe_allow_html=True)
-
-# ══════════════════════════════════════════════════════
-# التحليل والتوصية
-# ══════════════════════════════════════════════════════
-h = st.session_state.crash_history
-if len(h) < min_history:
+# ══ التحليل ═══════════════════════════════════════════════════════════
+h = st.session_state.history
+if len(h) < 3:
     st.markdown(f"""
-    <div class="status-caution" style="text-align:center; padding:30px;">
-        <div style="font-size:50px;">⏳</div>
-        <div style="font-size:22px; font-weight:700; margin:10px 0;">أضف المزيد من الدورات</div>
-        <div style="color:rgba(255,255,255,0.5);">تحتاج إلى {min_history - len(h)} دورة إضافية لبدء التحليل</div>
-    </div>
-    """, unsafe_allow_html=True)
+    <div class="STATUS-WAIT" style="text-align:center;padding:35px;">
+        <div style="font-size:44px;">⏳</div>
+        <div style="font-size:19px;font-weight:700;margin:10px 0;">أضف {3-len(h)} دورات للبدء</div>
+        <div style="color:rgba(255,255,255,0.35);">أو اضغط "ديمو" من الشريط الجانبي</div>
+    </div>""", unsafe_allow_html=True)
 else:
-    analyzer = CrashAnalyzer(h)
-    rec = analyzer.get_recommendation()
+    engine  = StatEngine(h)
+    rec     = engine.decide(st.session_state.balance)
+    stats   = engine.full_stats()
+    gh      = engine.golden_in_history(30)
+    spring  = rec["spring"]
+    extras  = rec.get("extras", {})
+    patterns= rec.get("patterns", [])
 
-    # ── الرسائل الرئيسية ──────────────────────────────
-    col_main, col_prob = st.columns([3, 2])
+    # حساب سلسلة الضغط مرة واحدة
+    pressure_series = engine.spring_pressure_series()
 
-    with col_main:
-        # الحالة الرئيسية
-        st.markdown(f'<div class="{rec["css_class"]}">', unsafe_allow_html=True)
+    # ══ الصف الرئيسي ══════════════════════════════════════════════
+    col_L, col_R = st.columns([3, 2])
+
+    with col_L:
+        # ── بطاقة الحالة الرئيسية ──────────────────────────────
+        st.markdown(f'<div class="STATUS-{rec["status"]}">', unsafe_allow_html=True)
+        icon_map = {"BET":"✅","STRONG":"🔥","AVOID":"⛔","WAIT":"⏳","DOUBLE":"⚡"}
         st.markdown(f"""
-        <div style="font-size:50px; margin-bottom:10px;">{rec['icon']}</div>
-        <div style="font-size:28px; font-weight:900; margin-bottom:12px;">{rec['title']}</div>
-        <div style="font-size:16px; color:rgba(255,255,255,0.8); line-height:1.7;">{rec['description']}</div>
+        <div style="font-size:44px;margin-bottom:8px;">{icon_map.get(rec['status'],'⏳')}</div>
+        <div style="font-size:22px;font-weight:900;margin-bottom:10px;">{rec['title']}</div>
+        <div style="font-size:14px;color:rgba(255,255,255,0.8);line-height:1.8;">{rec['desc']}</div>
         """, unsafe_allow_html=True)
 
-        if rec.get("predicted_range"):
-            low, high = rec["predicted_range"]
+        # النطاق + الرهان
+        if rec["tgt_lo"] and rec["tgt_hi"]:
+            profit_clr = "#00ff88" if rec["profit_est"]>0 else "#ff4444"
             st.markdown(f"""
-            <div style="margin-top:15px; padding:12px; background:rgba(0,0,0,0.3); border-radius:10px;">
-                <span style="color:rgba(255,255,255,0.5); font-size:13px;">النطاق المتوقع للدورة القادمة:</span><br>
-                <span style="font-family:'Orbitron',monospace; font-size:24px; color:#FFD700; font-weight:900;">
-                    x{low:.2f} — x{high:.2f}
-                </span>
-            </div>
-            """, unsafe_allow_html=True)
-
-        if rec.get("avoid_rounds", 0) > 0:
-            st.markdown(f"""
-            <div style="margin-top:12px; background:rgba(255,50,50,0.15); border-radius:8px; padding:10px 15px;">
-                ⏭️ <b>تجنب {rec['avoid_rounds']} دورة قادمة</b>
-            </div>
-            """, unsafe_allow_html=True)
+            <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
+                <div style="flex:2;min-width:130px;background:rgba(0,0,0,0.35);border-radius:11px;padding:12px;">
+                    <div style="color:rgba(255,255,255,0.38);font-size:11px;">🎯 النطاق المستهدف</div>
+                    <div style="font-family:'Orbitron',monospace;font-size:24px;color:#FFD700;font-weight:900;">
+                        x{rec['tgt_lo']} — x{rec['tgt_hi']}
+                    </div>
+                </div>
+                <div style="flex:1;min-width:100px;background:rgba(0,255,136,0.08);border:1px solid rgba(0,255,136,0.2);border-radius:11px;padding:12px;text-align:center;">
+                    <div style="color:rgba(255,255,255,0.38);font-size:10px;">💰 رهان Kelly</div>
+                    <div style="font-family:'Orbitron',monospace;font-size:20px;color:#00ff88;font-weight:900;">{rec['stake']:.0f}</div>
+                    <div style="color:rgba(255,255,255,0.28);font-size:9px;">{rec['stake_pct']}٪</div>
+                </div>
+                <div style="flex:1;min-width:100px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);border-radius:11px;padding:12px;text-align:center;">
+                    <div style="color:rgba(255,255,255,0.38);font-size:10px;">📈 ربح متوقع</div>
+                    <div style="font-family:'Orbitron',monospace;font-size:20px;color:{profit_clr};font-weight:900;">+{rec['profit_est']:.0f}</div>
+                </div>
+            </div>""", unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # الأنماط المكتشفة
-        if rec["patterns"] and show_all_patterns:
+        # ── الأنماط المكتشفة ────────────────────────────────────
+        if patterns:
             st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown("**🔍 الأنماط المكتشفة:**")
-            for p in rec["patterns"]:
-                action_tag = {
-                    "danger": '<span class="scenario-tag tag-avoid">⛔ خطر</span>',
-                    "avoid": '<span class="scenario-tag tag-wait">⚠️ تجنب</span>',
-                    "bet_range": '<span class="scenario-tag tag-bet">✅ راهن</span>',
-                    "recover": '<span class="scenario-tag tag-recover">💜 استرداد</span>',
-                }.get(p["action"], "")
-                st.markdown(f"""
-                <div class="bet-target">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <div>
-                            {action_tag}
-                            <span style="font-weight:700; font-size:16px; margin-right:8px;">{p['icon']} {p['name']}</span>
-                        </div>
-                        <div style="text-align:left;">
-                            <div style="color:#a855f7; font-size:13px;">ثقة: {p['confidence']}%</div>
-                            <div class="prob-bar"><div class="prob-fill" style="width:{p['confidence']}%;"></div></div>
-                        </div>
-                    </div>
-                    <div style="color:rgba(255,255,255,0.6); font-size:14px; margin-top:8px; line-height:1.6;">
-                        {p['reason']}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-    with col_prob:
-        # مخطط الاحتمالات
-        st.markdown("**📊 توزيع الاحتمالات:**")
-        render_probability_chart(rec["probs"])
-
-        # مقياس الثقة
-        render_confidence_bar(
-            rec.get("top_confidence", 50),
-            "مستوى الثقة في التوصية",
-            key=f"conf_{len(h)}"
-        )
-
-    # ── نقاط الرهان ────────────────────────────────────
-    if rec["bet_targets"]:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if rec["recovery_mode"]:
-            st.markdown("""
-            <div class="crash-card">
-                <div style="text-align:center; font-size:24px; font-weight:900; color:#c4b5fd; margin-bottom:20px;">
-                    💜 وضع الاسترداد — اسحب عند هذه النقاط
-                </div>
-                <div class="warning-box">
-                    ⚠️ <b>استراتيجية الاسترداد:</b> راهن بمبلغ صغير (1-2٪ من رصيدك) واسحب عند أول نقطة من القائمة.
-                    الهدف استرداد الخسائر بخطوات آمنة، ليس الربح الكبير.
-                </div>
-            """, unsafe_allow_html=True)
-            # عرض قائمة الاسترداد
-            cols_rec = st.columns(4)
-            for i, target in enumerate(RECOVERY_TARGETS):
-                # حساب المبلغ المقترح لكل نقطة (محافظ)
-                stake_pct = 0.015  # 1.5٪ من الرصيد
-                suggested_stake = max(5.0, st.session_state.balance * stake_pct)
-                potential = round(suggested_stake * target, 2)
-                profit = round(potential - suggested_stake, 2)
-                with cols_rec[i % 4]:
-                    st.markdown(f"""
-                    <div class="recover-item" style="flex-direction:column; align-items:flex-start;">
-                        <div class="multiplier-tag">x{target}</div>
-                        <div style="color:rgba(255,255,255,0.5); font-size:11px; margin-top:4px;">
-                            رهان: {suggested_stake:.0f} → ربح: +{profit:.1f}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+            st.markdown('<div class="card" style="padding:16px;">', unsafe_allow_html=True)
+            st.markdown('<div style="font-size:14px;font-weight:700;color:rgba(255,255,255,0.8);margin-bottom:10px;">🔍 الأنماط المكتشفة</div>', unsafe_allow_html=True)
+            pat_styles = {
+                "GOLDEN":      ("bx-o","⭐","رقم ذهبي"),
+                "DESCEND":     ("bx-b","📉","تسلسل هابط"),
+                "DOUBLE_JUMP": ("bx-g","⚡","قفزة مزدوجة"),
+                "POST_BIG":    ("bx-r","⛔","تجنب"),
+                "LOW_ENTROPY": ("bx-b","🔵","إنتروبيا منخفضة"),
+                "LOW_ZSCORE":  ("bx-y","📊","Z-score منخفض"),
+            }
+            for p in patterns:
+                cls, ic, lb = pat_styles.get(p["id"],("bx-b","🔹","نمط"))
+                st.markdown(f'<div class="{cls}">{ic} <b>{lb}:</b> {p["desc"]}</div>',
+                            unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
-        else:
-            # نقاط رهان عادية
+
+        # ── الزنبرك المفصّل ─────────────────────────────────────
+        st.markdown('<div class="card" style="padding:16px;">', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:14px;font-weight:700;color:rgba(255,255,255,0.8);margin-bottom:12px;">🔄 الزنبرك المضغوط — مستوى {spring["level"]}/5</div>', unsafe_allow_html=True)
+
+        p  = spring["pressure"]
+        pc = "#ff3232" if p>=70 else "#ff9500" if p>=40 else "#FFD700"
+        lv_lbl = ["لا زنبرك","ضعيف","متوسط","قوي","قوي جداً","أقصى"]
+        st.markdown(f"""
+        <div style="margin-bottom:12px;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                <span style="color:rgba(255,255,255,0.55);font-size:12px;">{lv_lbl[min(spring['level'],5)]}</span>
+                <span style="font-family:'Orbitron',monospace;color:{pc};font-weight:700;">{p}%</span>
+            </div>
+            <div class="pw"><div class="pf-o" style="width:{p}%;background:linear-gradient(90deg,#ff6400,{pc});"></div></div>
+        </div>""", unsafe_allow_html=True)
+
+        zc1,zc2,zc3,zc4 = st.columns(4)
+        for col_, val_, lbl_, clr_ in [
+            (zc1, spring["s2"],  "خسائر <x2", "#ff4444"),
+            (zc2, spring["s18"],"خسائر <x1.8","#ff6600"),
+            (zc3, spring["s15"],"خسائر <x1.5","#ff2020"),
+            (zc4, f'{spring["avg_seq"]}x',"متوسط السلسلة","#FFD700"),
+        ]:
+            with col_:
+                st.markdown(f"""<div class="kpi">
+                    <div class="kn" style="color:{clr_};">{val_}</div>
+                    <div class="kl">{lbl_}</div></div>""", unsafe_allow_html=True)
+
+        # Markov
+        mk = spring["markov"]
+        st.markdown(f"""
+        <div class="bx-b" style="margin-top:10px;">
+            📊 <b>Markov (بعد {spring['s2']} خسائر):</b>
+            P(≥x2)={mk.get('p_gt2',0)*100:.0f}% |
+            P(≥x5)={mk.get('p_gt5',0)*100:.0f}% |
+            P(≥x12)={mk.get('p_gt12',0)*100:.0f}% |
+            متوسط متوقع={mk.get('mean',0):.2f}x
+        </div>""", unsafe_allow_html=True)
+
+        if spring["level"] >= 2:
             st.markdown(f"""
-            <div class="crash-card">
-                <div style="text-align:center; font-size:22px; font-weight:900; color:#00ff88; margin-bottom:20px;">
-                    🎯 نقاط السحب المقترحة
-                </div>
-            """, unsafe_allow_html=True)
-            cols_bet = st.columns(len(rec["bet_targets"]))
-            for i, target in enumerate(rec["bet_targets"]):
-                stake_pct = 0.03
-                suggested_stake = max(10.0, st.session_state.balance * stake_pct)
-                potential = round(suggested_stake * target, 2)
-                profit = round(potential - suggested_stake, 2)
-                with cols_bet[i]:
-                    label = ["✅ نقطة آمنة", "🟡 متوازنة", "🔵 جريئة"][i % 3]
-                    st.markdown(f"""
-                    <div style="background:rgba(0,255,136,0.08); border:1px solid #00ff88; border-radius:14px; padding:20px; text-align:center;">
-                        <div style="font-size:13px; color:#00ff88; margin-bottom:8px;">{label}</div>
-                        <div class="multiplier-tag" style="font-size:30px;">x{target:.2f}</div>
-                        <div style="margin-top:12px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
-                            <span style="color:rgba(255,255,255,0.5); font-size:12px;">رهان مقترح:</span><br>
-                            <span style="color:#FFD700; font-size:20px; font-weight:900;">{suggested_stake:.0f}</span>
-                            <span style="color:rgba(255,255,255,0.4); font-size:12px;"> وحدة</span>
-                        </div>
-                        <div style="color:#00ff88; font-size:14px; margin-top:6px;">
-                            ربح متوقع: +{profit:.1f}
-                        </div>
+            <div class="bx-g" style="margin-top:8px;">
+                🎯 <b>نطاق القفزة المتوقع إحصائياً:</b>
+                <span style="font-family:'Orbitron',monospace;color:#FFD700;">
+                x{spring['exp_lo']:.1f} — x{spring['exp_hi']:.1f}
+                </span>
+            </div>""", unsafe_allow_html=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # ── رقم ذهبي مكتشف ─────────────────────────────────────
+        golden_pat = next((p for p in patterns if p["id"]=="GOLDEN"), None)
+        if golden_pat:
+            gn = golden_pat["gnum"]
+            gd = golden_pat["gdata"]
+            tm = TIER_META[gd["tier"]]
+            st.markdown(f"""
+            <div class="card" style="background:linear-gradient(135deg,rgba(255,149,0,0.09),rgba(255,70,0,0.04));
+                         border-color:rgba(255,149,0,0.38);padding:16px;">
+                <div style="text-align:center;margin-bottom:12px;">
+                    <span style="font-size:28px;">{tm['icon']}</span>
+                    <div style="font-size:15px;font-weight:900;color:{tm['color']};margin-top:3px;">
+                        رقم ذهبي {tm['label']} — {gd['label']}
                     </div>
-                    """, unsafe_allow_html=True)
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
+                    <div class="gc" style="flex:1;min-width:90px;">
+                        <div style="font-size:9px;color:rgba(255,255,255,0.35);">القيمة الفعلية</div>
+                        <div class="gn">x{h[-1]:.2f}</div>
+                        <div style="font-size:9px;color:rgba(255,255,255,0.3);">≈ x{gn}</div>
+                    </div>
+                    <div class="gc" style="flex:1;min-width:90px;">
+                        <div style="font-size:9px;color:rgba(255,255,255,0.35);">الهدف</div>
+                        <div class="gt">x{gd['tgt_lo']}–x{gd['tgt_hi']}</div>
+                        <div style="font-size:9px;color:rgba(255,255,255,0.3);">n={gd['n']} دورات</div>
+                    </div>
+                    <div class="gc" style="flex:1;min-width:90px;">
+                        <div style="font-size:9px;color:rgba(255,255,255,0.35);">متوسط تاريخي</div>
+                        <div class="gn" style="color:#a855f7;">{gd['avg_next']}x</div>
+                        <div style="font-size:9px;color:rgba(255,255,255,0.3);">win5={gd['win5_pct']*100:.0f}%</div>
+                    </div>
+                    <div class="gc" style="flex:1;min-width:90px;">
+                        <div style="font-size:9px;color:rgba(255,255,255,0.35);">الوسيط</div>
+                        <div class="gn" style="color:#FFD700;">{gd['med_next']}x</div>
+                        <div style="font-size:9px;color:rgba(255,255,255,0.3);">win2={gd['win2_pct']*100:.0f}%</div>
+                    </div>
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+    with col_R:
+        # ── مقاييس ──────────────────────────────────────────────
+        build_gauge(rec["confidence"],"ثقة Bayes %",f"bg_{len(h)}")
+        build_gauge(spring["pressure"],"ضغط الزنبرك %",f"sp_{len(h)}")
+
+        # ── المخطط الشبكي ────────────────────────────────────────
+        if extras:
+            st.markdown('<div class="card" style="padding:14px;">', unsafe_allow_html=True)
+            st.markdown('<div style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.7);margin-bottom:6px;text-align:center;">📡 خريطة العوامل الإحصائية</div>', unsafe_allow_html=True)
+            build_stat_radar(extras, key=f"rd_{len(h)}")
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── الرسم البياني للتاريخ ──────────────────────────
-    st.markdown('<div class="crash-card">', unsafe_allow_html=True)
-    st.markdown("**📈 مسار الدورات السابقة**")
-    render_history_chart(h)
+        # ── إحصائيات نصية ────────────────────────────────────────
+        st.markdown('<div class="card" style="padding:14px;">', unsafe_allow_html=True)
+        items2 = [
+            (f"{stats['zscore']:+.2f}","Z-score","#a855f7"),
+            (f"{stats['autocorr']:+.2f}","Autocorr","#6366f1"),
+            (f"{stats['entropy']:.2f}","Shannon Entropy","#00c8ff"),
+            (f"{stats['compression']*100:.0f}%","Compression","#00ff88"),
+        ]
+        r1c,r2c = st.columns(2)
+        for i,(v,l,c) in enumerate(items2):
+            with (r1c if i%2==0 else r2c):
+                st.markdown(f"""<div class="kpi" style="margin:3px 0;">
+                    <div class="kn" style="color:{c};font-size:18px;">{v}</div>
+                    <div class="kl">{l}</div></div>""", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    # إحصائيات سريعة
-    c1, c2, c3, c4, c5 = st.columns(5)
-    losses_streak = 0
-    for v in reversed(h):
-        if v < 2.0:
-            losses_streak += 1
-        else:
-            break
+        # ── توزيع الفئات ─────────────────────────────────────────
+        st.markdown('<div class="card" style="padding:14px;">', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.7);margin-bottom:4px;">📊 توزيع الدورات</div>', unsafe_allow_html=True)
+        build_distribution(h, key=f"ds_{len(h)}")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    with c1:
-        st.markdown(f'<div class="stat-box"><div class="stat-number">{h[-1]:.2f}x</div><div class="stat-label">آخر دورة</div></div>', unsafe_allow_html=True)
-    with c2:
-        st.markdown(f'<div class="stat-box"><div class="stat-number">{np.mean(h):.2f}x</div><div class="stat-label">المتوسط الكلي</div></div>', unsafe_allow_html=True)
-    with c3:
-        st.markdown(f'<div class="stat-box"><div class="stat-number">{max(h):.2f}x</div><div class="stat-label">أعلى مضاعف</div></div>', unsafe_allow_html=True)
-    with c4:
-        st.markdown(f'<div class="stat-box"><div class="stat-number" style="color:{"#ff4444" if losses_streak>3 else "#FFD700"};">{losses_streak}</div><div class="stat-label">خسائر متتالية</div></div>', unsafe_allow_html=True)
-    with c5:
-        win_rate = sum(1 for v in h if v >= 2.0) / len(h) * 100
-        st.markdown(f'<div class="stat-box"><div class="stat-number">{win_rate:.0f}%</div><div class="stat-label">معدل الفوق x2</div></div>', unsafe_allow_html=True)
+        # ── ما الذي تنتظره ────────────────────────────────────────
+        if rec["status"] == "WAIT":
+            st.markdown("""
+            <div class="bx-y">
+            <b>⏳ انتظر أحد هؤلاء:</b><br>
+            🔸 رقم ذهبي: 1.05، 1.09، 1.20، 1.53، 1.54، 1.77<br>
+            🔸 إنتروبيا < 1.5 + زنبرك ≥3<br>
+            🔸 Z-score &lt; −0.8 + سلسلة هابطة
+            </div>""", unsafe_allow_html=True)
 
+    # ══ الرسم البياني الرئيسي ══════════════════════════════════════
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown("**📈 مسار الدورات + ضغط الزنبرك** *(برتقالي=ضغط، نجمة=ذهبي، ◆=قفزة كبيرة)*")
+    build_main_chart(h, engine, pressure_series)
     st.markdown("</div>", unsafe_allow_html=True)
 
-# ── تحذير مسؤول ──────────────────────────────────
+    # ══ الأرقام الذهبية الأخيرة ════════════════════════════════════
+    if gh:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown(f"**⭐ آخر {min(len(gh),5)} أرقام ذهبية في التاريخ:**")
+        cols_g = st.columns(min(len(gh),5))
+        for i, item in enumerate(gh[-5:]):
+            gd = item["gdata"]
+            tm = TIER_META[gd["tier"]]
+            with cols_g[i]:
+                st.markdown(f"""
+                <div class="gc">
+                    <div style="font-size:9px;color:rgba(255,255,255,0.3);">#{item['pos']}</div>
+                    <div class="gn" style="font-size:16px;">{tm['icon']} x{item['val']:.2f}</div>
+                    <div style="font-size:9px;color:rgba(255,255,255,0.3);">≈x{item['gnum']}</div>
+                    <div class="gt" style="font-size:12px;">→x{gd['tgt_lo']}–{gd['tgt_hi']}</div>
+                    <div style="font-size:9px;color:rgba(255,255,255,0.25);">avg:{gd['avg_next']}x</div>
+                </div>""", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # ══ دليل المنهجية ══════════════════════════════════════════════
+    with st.expander("📚 المنهجية الإحصائية الكاملة"):
+        st.markdown(f"""
+        <div style="direction:rtl;color:rgba(255,255,255,0.8);line-height:2;font-size:13px;">
+
+        <div class="bx-g">
+        <b>🔥 F1 — الزنبرك المضغوط (قانون بيانات {len(HISTORICAL_DATA)} دورة):</b><br>
+        2 خسائر→6.8x | 3→7.4x | 4→9.2x | 5→14.2x | 6+→19.5x<br>
+        الضغط = streak×9 + streak18×7 + streak15×5 + (1.8−avg)×35
+        </div>
+
+        <div class="bx-b">
+        <b>🎯 F2 — الأرقام الذهبية (مُحسوبة من الداتا):</b><br>
+        تير-1: 1.05(avg=14.5x), 1.20(17.2x), 1.09(9.7x)<br>
+        تير-2: 1.77(8.3x), 1.53(6.7x), 1.54(6.0x), 1.84(6.6x)<br>
+        الهامش: ±0.04 | المحذوفة: 1.91, 1.96, 1.25 (avg<2.5x)
+        </div>
+
+        <div class="bx-o">
+        <b>📐 F3 — Bayesian Confidence:</b><br>
+        P(قفزة|شواهد) = prior × ∏ LR_i<br>
+        Prior = {round(sum(1 for v in HISTORICAL_DATA if v>=5)/len(HISTORICAL_DATA)*100)}% من {len(HISTORICAL_DATA)} دورة<br>
+        LR الزنبرك: 0.6–4.5 | LR الذهبي: 1.5–3.0 | LR Markov: 1.0–2.0
+        </div>
+
+        <div class="bx-g">
+        <b>♟️ F4 — Markov Transition:</b><br>
+        P(next≥5 | k خسائر) محسوبة مباشرة من البيانات التاريخية.<br>
+        كلما زادت سلسلة الخسائر، زادت احتمالية القفزة الكبيرة.
+        </div>
+
+        <div class="bx-b">
+        <b>📊 F5 — Shannon Entropy + Compression:</b><br>
+        Entropy = −Σ p×log2(p) على 5 فئات | Max=2.32 bits<br>
+        Compression = 1 − H/H_max | مرتفع = نمط واضح
+        </div>
+
+        <div class="bx-y">
+        <b>📉 F6 — Z-score + Autocorrelation:</b><br>
+        Z = (last − μ_ref) / σ_ref | Z≤−0.8 = قيمة شاذة منخفضة<br>
+        Autocorr(lag=1) سالبة = ميل للتذبذب (مؤشر ارتداد)
+        </div>
+
+        <div class="bx-o">
+        <b>💰 F7 — Kelly Criterion (¼ Kelly):</b><br>
+        f* = (p×b − q) / b حيث b=odds−1, q=1−p<br>
+        الرهان الفعلي = f* × 0.25 × الرصيد (حد أقصى 5%)
+        </div>
+
+        </div>""", unsafe_allow_html=True)
+
+# ══ تحذير ═════════════════════════════════════════════════════════════
 st.markdown("""
-<div class="warning-box">
-    <b>⚠️ تنبيه مهم:</b> هذا النظام أداة تحليل إحصائي للأنماط فقط. ألعاب Crash تعتمد على مولد أرقام عشوائية (RNG)
-    ولا يوجد ضمان رياضي مطلق للتوقعات. تحمّل فقط ما تستطيع خسارته. الهدف من النظام: تقليل المخاطر وليس ضمان الربح.
-</div>
-""", unsafe_allow_html=True)
+<div class="bx-r" style="margin-top:8px;">
+<b>⚠️ تنبيه قانوني:</b> هذا النظام أداة تحليل إحصائي للأنماط فقط.
+Crash يعتمد على RNG معتمد. لا ضمان رياضي مطلق.
+تحمّل فقط ما تستطيع خسارته.
+</div>""", unsafe_allow_html=True)
