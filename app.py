@@ -1168,7 +1168,7 @@ with tab4:
         # جدول التفاصيل
         with st.expander("📋 جدول تفاصيل الاختبار الخلفي"):
             st.dataframe(
-                bt_df.style.applymap(
+                bt_df.style.map(
                     lambda v: 'color: #00ff88' if v == '✅' else
                               'color: #ffa500' if v == '⚠️' else
                               'color: #ff4444',
